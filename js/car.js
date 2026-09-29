@@ -16,6 +16,8 @@ export const DIM = {
 };
 
 const HW = DIM.W / 2;      // половина ширины
+const NOSE_X = DIM.L - 0.38;
+const NOSE_W = HW - 0.13 * Math.pow((NOSE_X - 4.1) / 0.65, 2.4);
 const R_ROOF = 0.16;       // радиус скругления крыши
 const Y_BOTTOM = 0.34;     // нижняя кромка кузова
 
@@ -66,10 +68,10 @@ const topLine = smoothProfile(
     [0.14, 1.842],
     [2.95, 1.852],
     [3.1, 1.835],
-    [3.97, 1.13],
-    [4.25, 1.09],
-    [4.6, 1.02],
-    [4.76, 0.93],
+    [3.97, 1.15],
+    [4.25, 1.135],
+    [4.6, 1.095],
+    [4.76, 1.04],
   ],
   0.05,
   -0.1,
@@ -81,9 +83,14 @@ const shoulder = (x) => topLine(x) - R_ROOF;
 // Полуширина кузова: сужение носа в плане, завал боковин вверху и подворот внизу.
 function halfWidth(x, y) {
   let w = HW;
-  if (x > 4.1) w -= 0.13 * Math.pow((x - 4.1) / 0.65, 2.4);
+  // нос: до NOSE_X плавное сужение, дальше крылья в плане идут по суперэллипсу —
+  // той же кривой, что и бампер, поэтому крыло, фара и бампер сходятся без ступенек
+  if (x > NOSE_X) {
+    const u = Math.min(1, (x - NOSE_X) / (DIM.L + 0.012 - NOSE_X));
+    w = NOSE_W * Math.pow(1 - Math.pow(u, 4), 0.25);
+  } else if (x > 4.1) w -= 0.13 * Math.pow((x - 4.1) / 0.65, 2.4);
   if (x < 0.3) w -= 0.07 * Math.pow((0.3 - x) / 0.3, 2.2); // скруглённые задние углы в плане
-  if (y > 1.0) w -= 0.07 * Math.pow(Math.min(1, (y - 1.0) / 0.85), 1.6);
+  if (y > 1.0) w -= 0.15 * Math.pow(Math.min(1.2, (y - 1.0) / 0.75), 1.5); // завал боковин: крыша ≈1,45 м
   if (y < 0.5) w -= 0.025 * Math.pow((0.5 - y) / 0.16, 2);
   return w;
 }
@@ -225,6 +232,48 @@ function roundedRectShape(x0, y0, x1, y1, r, rTop = r) {
   return s;
 }
 
+// Объёмный бампер: контур в плане (x,z) вытягивается по высоте, в каждой точке
+// профиль смещается по нормали (подворот внизу, завал вверху), сверху и снизу — полки.
+// outline — точки в плане по порядку; yLo/yHi(i) — высоты низа и верха в точке i;
+// prof(v) — смещение наружу при относительной высоте v ∈ [0,1]; depth — глубина полок.
+function bumperGeo(outline, yLo, yHi, prof, depth = 0.14, nv = 14) {
+  const n = outline.length;
+  const normals = outline.map((p, i) => {
+    const a = outline[Math.max(0, i - 1)];
+    const b = outline[Math.min(n - 1, i + 1)];
+    const t = new THREE.Vector2(b.x - a.x, b.y - a.y).normalize();
+    const nn = new THREE.Vector2(t.y, -t.x);
+    // наружу — от центра машины в плане
+    const c = new THREE.Vector2(p.x - DIM.L / 2, p.y);
+    if (nn.dot(c) < 0) nn.negate();
+    return nn;
+  });
+  const rows = [];
+  // нижняя полка (изнутри к кромке), лицевая поверхность, верхняя полка (от кромки внутрь)
+  rows.push((i) => ({ o: prof(0) - depth, y: yLo(i) + 0.01 }));
+  for (let j = 0; j <= nv; j++) rows.push((i) => ({ o: prof(j / nv), y: yLo(i) + (yHi(i) - yLo(i)) * (j / nv) }));
+  rows.push((i) => ({ o: prof(1) - depth, y: yHi(i) - 0.005 }));
+  const pos = [];
+  const idx = [];
+  rows.forEach((row) => {
+    for (let i = 0; i < n; i++) {
+      const { o, y } = row(i);
+      pos.push(outline[i].x + normals[i].x * o, y, outline[i].y + normals[i].y * o);
+    }
+  });
+  for (let r = 0; r < rows.length - 1; r++) {
+    for (let i = 0; i < n - 1; i++) {
+      const a = r * n + i;
+      idx.push(a, a + 1, a + n, a + 1, a + n + 1, a + n);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
 // ---------------------------------------------------------------- текстуры
 
 function canvasTexture(w, h, draw, repeat = [1, 1]) {
@@ -275,7 +324,7 @@ export function createMaterials() {
       side: DS, depthWrite: false, envMapIntensity: 1.6,
     }),
     lamp: new THREE.MeshPhysicalMaterial({
-      color: 0xaab3ba, metalness: 0.9, roughness: 0.1, clearcoat: 1, emissive: 0x6d7f8c, emissiveIntensity: 0.1, side: DS,
+      color: 0x7f8a93, metalness: 1, roughness: 0.18, clearcoat: 1, emissive: 0x2c3338, emissiveIntensity: 0.15, side: DS,
     }),
     tail: new THREE.MeshPhysicalMaterial({
       color: 0xa3141b, roughness: 0.15, clearcoat: 1, emissive: 0x5a0508, emissiveIntensity: 0.6, side: DS,
@@ -344,9 +393,9 @@ export function buildCar(M) {
 
   // ----- ключевые координаты
   const X_A = 3.52;          // передняя кромка передней двери
-  const X_B = 2.62;          // стойка B (задняя кромка передней двери)
-  const X_B2 = 2.55;         // передняя кромка сдвижной двери
-  const X_SL = 1.56;         // задняя кромка сдвижной двери
+  const X_B = 2.36;          // стойка B (задняя кромка передней двери)
+  const X_B2 = 2.29;         // передняя кромка сдвижной двери
+  const X_SL = 1.32;         // задняя кромка сдвижной двери
   const Y_SILL = 0.41;       // порог
   const Y_BELT = 1.06;       // линия остекления
   const GAP = 0.004;
@@ -364,13 +413,22 @@ export function buildCar(M) {
     // выштамповка большой панели на грузовом отсеке
     emboss(side, 0.3, hasSlide ? X_SL - 0.08 : X_B2 - 0.1, 1.1, 1.64);
     // молдинг: слева продолжается на боковину, справа — только на дверях
-    if (!hasSlide) mesh(sideGeo({ side, x0: 1.55, x1: X_B2 - 0.01, y0: 0.66, y1: 0.74, off: 0.008, nu: 12, nv: 1 }), M.plastic);
+    if (!hasSlide) mesh(sideGeo({ side, x0: 1.2, x1: X_B2 - 0.01, y0: 0.47, y1: 0.54, off: 0.008, nu: 12, nv: 1 }), M.plastic);
     // грузовой отсек без обшивки: внутренняя панель боковины из окрашенного металла
-    mesh(sideGeo({ side, x0: 0.06, x1: hasSlide ? X_SL : 2.46, y0: 0.5, y1: (x) => shoulder(x) - 0.02, off: -0.035, nu: 24, nv: 10 }), M.paintInner, interior);
-    // стойки-усилители каркаса и крючки для крепления груза
-    for (const x of [0.55, 1.2]) {
-      if (hasSlide && x > X_SL - 0.1) continue;
-      mesh(sideGeo({ side, x0: x - 0.04, x1: x + 0.04, y0: 0.72, y1: (xx) => shoulder(xx) - 0.03, off: -0.06, nu: 2, nv: 6 }), M.paintInner, interior);
+    mesh(sideGeo({ side, x0: 0.06, x1: hasSlide ? X_SL : X_B2 - 0.06, y0: 0.5, y1: (x) => shoulder(x) - 0.02, off: -0.035, nu: 24, nv: 10 }), M.paintInner, interior);
+    // силовые стойки и продольный брус по линии пояса
+    const xMax = hasSlide ? X_SL - 0.06 : 2.4;
+    for (const x of [0.2, 0.62, 1.1, 1.62, 2.1]) {
+      if (x > xMax) continue;
+      mesh(sideGeo({ side, x0: x - 0.035, x1: x + 0.035, y0: 0.72, y1: (xx) => shoulder(xx) - 0.03, off: -0.065, nu: 2, nv: 6 }), M.paintInner, interior);
+    }
+    mesh(sideGeo({ side, x0: 0.12, x1: xMax, y0: 1.06, y1: 1.14, off: -0.07, nu: 16, nv: 1 }), M.paintInner, interior);
+    // крючки крепления груза на стойках
+    for (const x of [0.2, 1.1, 2.1]) {
+      if (x > xMax) continue;
+      const hook = mesh(new THREE.TorusGeometry(0.025, 0.006, 6, 12, Math.PI), M.steel, interior);
+      hook.position.set(x, 1.2, side * (halfWidth(x, 1.2) - 0.08));
+      hook.rotation.y = Math.PI / 2;
     }
     mesh(sideGeo({ side, x0: X_B2, x1: X_B, y0: 0.5, off: -0.035, nu: 2, nv: 8 }), M.trim, interior);
     if (hasSlide) {
@@ -379,8 +437,8 @@ export function buildCar(M) {
       box(0.64, 0.05, 0.012, 0.01, M.paint, X_SL - 0.33, 1.05, HW + 0.002, body);
     } else {
       // лючок топливного бака над передней частью задней арки
-      const fx = 1.02;
-      const fy = 1.02;
+      const fx = 0.72;
+      const fy = 1.2;
       const flap = mesh(new THREE.CylinderGeometry(0.085, 0.085, 0.006, 32), M.paint);
       flap.rotation.x = Math.PI / 2;
       flap.position.set(fx, fy, -(halfWidth(fx, fy) + 0.003));
@@ -389,8 +447,8 @@ export function buildCar(M) {
     }
 
     // чёрные угловые накладки заднего бампера, заходящие на боковину
-    mesh(sideGeo({ side, x0: 0.0, x1: 0.34, y0: Y_BOTTOM, y1: (x) => 0.88 - 0.36 * Math.pow(x / 0.34, 1.5), off: 0.008, nu: 12, nv: 6 }), M.plastic);
-    box(0.03, 0.56, 0.14, 0.012, M.plastic, -0.012, 0.61, side * (halfWidth(0, 0.6) - 0.06), body);
+    mesh(sideGeo({ side, x0: 0.0, x1: 0.36, y0: Y_BOTTOM, y1: (x) => 0.9 - 0.4 * Math.pow(x / 0.36, 1.3), off: 0.01, nu: 14, nv: 8 }), M.plastic);
+    box(0.03, 0.42, 0.12, 0.012, M.plastic, -0.014, 0.69, side * (halfWidth(0, 0.7) - 0.05), body);
 
     // подкрылки
     for (const ax of [DIM.rearAxle, DIM.frontAxle]) {
@@ -403,7 +461,7 @@ export function buildCar(M) {
 
   // ----- крыша, лобовое стекло, капот
   mesh(topGeo({ x0: 0, x1: 3.14, nu: 30, nv: 30 }), M.paint, roof);
-  mesh(topGeo({ x0: 0.06, x1: 2.46, off: -0.03, s0: -0.93, s1: 0.93, nu: 10, nv: 20 }), M.paintInner, roof);
+  mesh(topGeo({ x0: 0.06, x1: X_B2 - 0.06, off: -0.03, s0: -0.93, s1: 0.93, nu: 10, nv: 20 }), M.paintInner, roof);
   mesh(topGeo({ x0: 2.55, x1: 3.12, off: -0.03, s0: -0.93, s1: 0.93, nu: 6, nv: 20 }), M.headliner, roof);
   mesh(topGeo({ x0: 3.14, x1: 3.95, s0: -0.9, s1: 0.9, nu: 20, nv: 24 }), M.glass, body, false);
   mesh(topGeo({ x0: 3.12, x1: 3.97, s0: -1, s1: -0.9, nu: 20, nv: 4 }), M.plastic);
@@ -448,115 +506,240 @@ export function buildCar(M) {
     cap.position.set(4.2, 0.95, 0.45);
   }
 
-  // ----- нос: чёрный торец с решёткой, стреловидные фары, большой чёрный бампер
-  mesh(capGeo(sectionShape(DIM.L - 0.004), DIM.L - 0.004), M.plastic);
+  // ----- нос: окрашенный торец, решётка под кромкой капота, высокие стреловидные фары, чёрный бампер
+  mesh(capGeo(sectionShape(DIM.L - 0.004), DIM.L - 0.004), M.paint);
   {
-    const Y_BUMP = 0.71; // верх бампера = низ фар и решётки
-    // решётка: чёрная полоса под кромкой капота между фарами
-    for (let i = 0; i < 3; i++) {
-      box(0.02, 0.012, 0.74, 0.004, M.plasticMid, DIM.L + 0.006, Y_BUMP + 0.035 + i * 0.035, 0, body);
+    const Y_BUMP = 0.75;   // верх бампера по центру = низ решётки
+    const Y_GR = 0.9;      // верх решётки = кромка капота
+    const HL_ZI = 0.4;     // внутренний край фары на торце
+    // решётка: трапеция, шире сверху, с рамкой и сотовыми рёбрами
+    const gr = new THREE.Shape();
+    gr.moveTo(-HL_ZI + 0.02, Y_BUMP - 0.01);
+    gr.lineTo(HL_ZI - 0.02, Y_BUMP - 0.01);
+    gr.lineTo(HL_ZI + 0.03, Y_GR);
+    gr.lineTo(-HL_ZI - 0.03, Y_GR);
+    gr.closePath();
+    mesh(capGeo(gr, DIM.L + 0.003), M.plastic);
+    for (let i = 0; i < 4; i++) {
+      const y = Y_BUMP + 0.03 + i * 0.043;
+      const w = 2 * (HL_ZI - 0.04 + ((y - Y_BUMP) / (Y_GR - Y_BUMP)) * 0.05);
+      box(0.012, 0.01, w, 0.003, M.plasticMid, DIM.L + 0.01, y, 0, body);
     }
+    for (let i = -6; i <= 6; i++) box(0.012, Y_GR - Y_BUMP - 0.04, 0.008, 0.002, M.plasticMid, DIM.L + 0.01, (Y_BUMP + Y_GR) / 2, i * 0.05, body);
+    // хромированный молдинг по верхней кромке решётки
+    box(0.012, 0.012, 2 * HL_ZI + 0.04, 0.005, M.chrome, DIM.L + 0.012, Y_GR - 0.006, 0, body);
     // эмблема в хромированном кольце
     const bRing = mesh(new THREE.CylinderGeometry(0.052, 0.052, 0.02, 36), M.chrome);
     bRing.rotation.z = Math.PI / 2;
-    bRing.position.set(DIM.L + 0.012, 0.815, 0);
+    bRing.position.set(DIM.L + 0.016, 0.83, 0);
     const bRed = mesh(new THREE.CylinderGeometry(0.042, 0.042, 0.02, 36), M.badge);
     bRed.rotation.z = Math.PI / 2;
-    bRed.position.set(DIM.L + 0.018, 0.815, 0);
+    bRed.position.set(DIM.L + 0.022, 0.83, 0);
     // фары: каплевидные, вытянуты назад по крылу до стойки капота
-    const hlBottom = (x) => Y_BUMP + 0.01 + 0.17 * Math.pow(Math.max(0, DIM.L - x) / 0.5, 1.2);
+    // низ фары: на торце ~0.79 м, назад по крылу поднимается к линии капота
+    const hlBottom = (x) => 0.87 + 0.13 * Math.pow(Math.max(0, DIM.L - x) / 0.5, 1.3);
     for (const side of [-1, 1]) {
       mesh(sideGeo({ side, x0: 4.24, x1: DIM.L, y0: hlBottom, y1: 9, off: 0.006, nu: 18, nv: 6 }), M.lamp);
       // верхняя кромка фары заходит на скругление крыла, выше — линия разъёма капота
-      mesh(topGeo({ x0: (sv) => 4.3 + 1.6 * (1 - Math.abs(sv)), x1: DIM.L, s0: side < 0 ? -1 : 0.91, s1: side < 0 ? -0.91 : 1, off: 0.006, nu: 12, nv: 4 }), M.lamp);
+      mesh(topGeo({ x0: (sv) => 4.3 + 1.6 * (1 - Math.abs(sv)), x1: DIM.L, s0: side < 0 ? -1 : 0.8, s1: side < 0 ? -0.8 : 1, off: 0.006, nu: 12, nv: 4 }), M.lamp);
       // лицевая часть фары на торце
       const fShape = new THREE.Shape();
-      const zi = 0.4;
+      const zi = HL_ZI;
       const zo = halfWidth(DIM.L, 0.8);
-      fShape.moveTo(side * zi, Y_BUMP + 0.01);
-      fShape.lineTo(side * zo, Y_BUMP + 0.01);
-      fShape.lineTo(side * zo, topLine(DIM.L) - 0.02);
-      fShape.quadraticCurveTo(side * (zi + 0.1), topLine(DIM.L) + 0.02, side * zi, Y_BUMP + 0.08);
+      const yTop = shoulder(DIM.L) + 0.02;
+      fShape.moveTo(side * (zi + 0.03), 0.88);
+      fShape.lineTo(side * zo, 0.87);
+      fShape.lineTo(side * zo, yTop);
+      fShape.quadraticCurveTo(side * (zi + 0.02), yTop + 0.02, side * (zi - 0.01), Y_GR - 0.01);
       fShape.closePath();
       mesh(capGeo(fShape, DIM.L + 0.002), M.lamp);
       // отражатели внутри фары
-      for (const [dz, r] of [[0.52, 0.05], [0.66, 0.042]]) {
+      // отражатели: один на торце, второй на скруглении крыла, ось — по нормали поверхности
+      const onNose = (xx, yy) => {
+        const w = halfWidth(xx, yy);
+        const dw = (halfWidth(xx + 0.002, yy) - halfWidth(xx - 0.002, yy)) / 0.004;
+        const n = new THREE.Vector3(-dw, 0, side).normalize();
+        return { p: new THREE.Vector3(xx, yy, side * w).addScaledVector(n, 0.004), n };
+      };
+      const r1 = mesh(new THREE.CylinderGeometry(0.05, 0.055, 0.012, 24), M.chrome);
+      r1.rotation.z = Math.PI / 2;
+      r1.position.set(DIM.L + 0.008, 0.93, side * (zi + 0.09));
+      for (const [xx, r] of [[DIM.L - 0.05, 0.042], [DIM.L - 0.15, 0.03]]) {
+        const { p, n } = onNose(xx, 0.95);
         const pr = mesh(new THREE.CylinderGeometry(r, r * 1.1, 0.012, 24), M.chrome);
-        pr.rotation.z = Math.PI / 2;
-        pr.position.set(DIM.L + 0.006, 0.8, side * dz);
+        pr.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), n);
+        pr.position.copy(p);
       }
-      box(0.008, 0.02, 0.06, 0.006, M.amber, DIM.L + 0.006, 0.76, side * (zo - 0.05), body);
+      // указатель поворота — узкая полоска по поверхности крыла внутри фары
+      mesh(sideGeo({ side, x0: DIM.L - 0.3, x1: DIM.L - 0.2, y0: (x) => hlBottom(x) + 0.015, y1: (x) => hlBottom(x) + 0.04, off: 0.009, nu: 6, nv: 1 }), M.amber);
     }
-    // бампер: план повторяет скругление носа, верх на уровне низа фар
-    const pts = [];
-    for (let i = 0; i <= 28; i++) {
-      const x = 4.18 + ((DIM.L + 0.04 - 4.18) * i) / 28;
-      pts.push(new THREE.Vector2(x, halfWidth(Math.min(x, DIM.L), 0.5) + 0.018));
+    // бампер: объёмный, в плане повторяет скругление носа и уходит к передним аркам,
+    // верхняя кромка идёт по нижнему краю фар, снизу — подворот и приподнятые углы
+    // план бампера: боковины вдоль крыльев + передняя часть-суперэллипс (плавно скруглённые углы)
+    const CX = NOSE_X;
+    const zEnd = halfWidth(CX, 0.5) + 0.022;
+    const AX = DIM.L + 0.085 - CX;
+    const outline = [];
+    const sidePts = [];
+    for (let i = 0; i < 12; i++) {
+      const x = 4.16 + ((CX - 4.16) * i) / 12;
+      sidePts.push(new THREE.Vector2(x, halfWidth(x, 0.5) + 0.022));
     }
-    const shape = new THREE.Shape();
-    shape.moveTo(pts[0].x, -pts[0].y);
-    for (const p of pts) shape.lineTo(p.x, -p.y);
-    shape.lineTo(DIM.L + 0.07, 0);
-    for (let i = pts.length - 1; i >= 0; i--) shape.lineTo(pts[i].x, pts[i].y);
-    shape.closePath();
-    const bg = new THREE.ExtrudeGeometry(shape, { depth: Y_BUMP - 0.26, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.022, bevelSegments: 4, curveSegments: 12 });
-    const bumper = mesh(bg, M.plastic);
-    bumper.rotation.x = -Math.PI / 2;
-    bumper.position.y = 0.23;
-    // номер, нижний воздухозаборник, противотуманки в нишах
-    box(0.01, 0.11, 0.52, 0.005, M.plate, DIM.L + 0.1, 0.52, 0, body);
-    box(0.02, 0.1, 0.9, 0.02, M.rubber, DIM.L + 0.094, 0.33, 0, body);
-    for (let i = 0; i < 3; i++) box(0.01, 0.008, 0.86, 0, M.plasticMid, DIM.L + 0.104, 0.3 + i * 0.03, 0, body);
+    const nose = [];
+    for (let i = 0; i <= 40; i++) {
+      const t = -Math.PI / 2 + (Math.PI * i) / 40;
+      const c = Math.cos(t);
+      const sn = Math.sin(t);
+      nose.push(new THREE.Vector2(CX + AX * Math.pow(Math.abs(c), 0.5), zEnd * Math.sign(sn) * Math.pow(Math.abs(sn), 0.5)));
+    }
+    sidePts.forEach((p) => outline.push(new THREE.Vector2(p.x, -p.y)));
+    nose.forEach((p) => outline.push(p));
+    sidePts.slice().reverse().forEach((p) => outline.push(new THREE.Vector2(p.x, p.y)));
+    // передняя кромка бампера для размещения деталей
+    const frontX = (z) => CX + AX * Math.pow(Math.max(0, 1 - Math.pow(Math.min(1, Math.abs(z) / zEnd), 4)), 0.25);
+    const bLo = (i) => {
+      const p = outline[i];
+      const k = p.x < CX ? (CX - p.x) / 0.5 : 0;
+      return 0.235 + 0.06 * Math.pow(Math.abs(p.y) / zEnd, 4) + 0.08 * k;
+    };
+    // сбоку верх бампера идёт по низу фары, за фарой опускается к арке
+    const bHi = (i) => {
+      const x = outline[i].x;
+      if (x <= 4.3) return hlBottom(4.3) - 0.012 - (4.3 - x) * 1.6;
+      const zz = Math.abs(outline[i].y);
+      const k = Math.min(1, Math.max(0, (zz - (HL_ZI - 0.04)) / 0.12));
+      const kk = k * k * (3 - 2 * k);
+      return Y_BUMP - 0.012 + (hlBottom(Math.min(x, DIM.L)) - 0.012 - (Y_BUMP - 0.012)) * kk;
+    };
+    const bProf = (v) => 0.02 - 0.055 * Math.pow(1 - v, 3) - 0.035 * Math.pow(v, 3) + (v > 0.52 ? -0.01 : 0);
+    mesh(bumperGeo(outline, bLo, bHi, bProf, 0.16), M.plastic);
+    const fx = (z) => frontX(z) - 0.012;
+    // углубление под номер
+    box(0.03, 0.16, 0.6, 0.02, M.rubber, fx(0) - 0.01, 0.57, 0, body);
+    box(0.012, 0.11, 0.52, 0.005, M.plate, fx(0) + 0.008, 0.57, 0, body);
+    // нижний воздухозаборник-трапеция с рёбрами
+    const intake = new THREE.Shape();
+    intake.moveTo(-0.46, 0.27);
+    intake.lineTo(0.46, 0.27);
+    intake.lineTo(0.52, 0.43);
+    intake.lineTo(-0.52, 0.43);
+    intake.closePath();
+    const ig = capGeo(intake, 0);
+    ig.translate(0, 0, 0);
+    const im = mesh(ig, M.rubber);
+    im.position.x = fx(0.3) + 0.004;
+    for (let i = 0; i < 4; i++) box(0.01, 0.012, 0.9 + i * 0.03, 0.004, M.plasticMid, fx(0.3) + 0.012, 0.3 + i * 0.037, 0, body);
+    // противотуманки в угловых нишах
     for (const side of [-1, 1]) {
-      const niche = box(0.03, 0.1, 0.2, 0.035, M.rubber, DIM.L + 0.06, 0.36, side * 0.63, body);
-      niche.rotation.y = side * 0.35;
-      const fog = mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.02, 20), M.lamp);
+      const z = side * 0.6;
+      // угол касательной к кромке бампера в точке z
+      const ang = -Math.atan2(frontX(z + 0.01) - frontX(z - 0.01), 0.02);
+      const niche = box(0.03, 0.12, 0.2, 0.04, M.rubber, fx(z) - 0.004, 0.37, z, body);
+      niche.rotation.y = ang;
+      const fog = mesh(new THREE.CylinderGeometry(0.036, 0.036, 0.02, 24), M.lamp);
       fog.rotation.z = Math.PI / 2;
-      fog.position.set(DIM.L + 0.07, 0.36, side * 0.64);
-      fog.rotation.y = side * 0.35;
+      fog.rotation.y = ang;
+      fog.position.set(fx(z) + 0.012, 0.37, z);
+      const rim = mesh(new THREE.TorusGeometry(0.042, 0.006, 6, 24), M.chrome);
+      rim.rotation.y = Math.PI / 2 + ang;
+      rim.position.set(fx(z) + 0.014, 0.37, z);
     }
+    // заглушка буксировочной проушины
+    box(0.012, 0.04, 0.05, 0.015, M.plasticMid, fx(-0.46) + 0.004, 0.52, -0.46, body);
   }
 
   // ----- корма: рамка проёма, фонари, бампер
   const RD = { z0: -0.74, z1: 0.74, y0: 0.47, y1: 1.7, split: 0.11 };
+  // полуширина проёма на высоте y: повторяет завал боковин, оставляя стойку ~7 см
+  const rearEdge = (y) => Math.min(RD.z1, halfWidth(0.002, y) - 0.075);
+  // контур створки/проёма: внешняя кромка идёт по rearEdge, верхний внешний угол скруглён
+  const rearShape = (za, zb, y0, y1, inset, outerSign, rT = 0.12) => {
+    const pts = [];
+    const edge = (y) => outerSign * (rearEdge(y) - inset);
+    const inner = outerSign < 0 ? zb : za;
+    pts.push([inner, y0], [edge(y0), y0]);
+    for (let i = 1; i <= 10; i++) {
+      const y = y0 + ((y1 - rT - y0) * i) / 10;
+      pts.push([edge(y), y]);
+    }
+    const c = edge(y1 - rT);
+    for (let i = 1; i <= 6; i++) {
+      const a = (Math.PI / 2) * (i / 6);
+      pts.push([c - outerSign * rT * (1 - Math.cos(a)), y1 - rT + rT * Math.sin(a)]);
+    }
+    pts.push([inner, y1]);
+    if (outerSign > 0) pts.reverse();
+    return new THREE.Shape(pts.map(([z, y]) => new THREE.Vector2(z, y)));
+  };
   {
     const outer = sectionShape(0.001);
-    outer.holes.push(roundedRectShape(RD.z0, RD.y0, RD.z1, RD.y1, 0.02, 0.12));
+    const hole = new THREE.Path([
+      ...rearShape(0, 0, RD.y0, RD.y1, 0, -1).getPoints().slice(0, -1).reverse(),
+      ...rearShape(0, 0, RD.y0, RD.y1, 0, 1).getPoints().slice(1).reverse(),
+    ]);
+    outer.holes.push(hole);
     mesh(capGeo(outer, 0.001), M.paint);
     // внутренняя кромка проёма (толщина)
     const frameD = 0.05;
-    box(frameD, 0.04, RD.z1 - RD.z0, 0, M.paint, frameD / 2, RD.y1 + 0.02, 0, body);
-    box(frameD, RD.y1 - RD.y0, 0.04, 0, M.paint, frameD / 2, (RD.y0 + RD.y1) / 2, RD.z0 - 0.02, body);
-    box(frameD, RD.y1 - RD.y0, 0.04, 0, M.paint, frameD / 2, (RD.y0 + RD.y1) / 2, RD.z1 + 0.02, body);
+    box(frameD, 0.04, 2 * rearEdge(RD.y1) - 0.2, 0, M.paint, frameD / 2, RD.y1 + 0.02, 0, body);
     // фонари на стойках
     for (const side of [-1, 1]) {
       // корпус фонаря снаружи стойки + часть, заходящая на боковину
       const tl = new THREE.Shape();
-      const zi = 0.755;
+      const zi = rearEdge(1.2) + 0.012;
       const zo = halfWidth(0, 1.2) + 0.006;
-      tl.moveTo(side * zi, 0.9);
-      tl.lineTo(side * zo, 0.9);
-      tl.lineTo(side * zo, 1.6);
-      tl.quadraticCurveTo(side * zi, 1.62, side * zi, 1.45);
+      tl.moveTo(side * (rearEdge(0.9) + 0.012), 0.9);
+      tl.lineTo(side * (halfWidth(0, 0.9) + 0.006), 0.9);
+      tl.lineTo(side * (halfWidth(0, 1.55) + 0.006), 1.55);
+      tl.quadraticCurveTo(side * (rearEdge(1.6) + 0.02), 1.64, side * (rearEdge(1.45) + 0.012), 1.45);
       tl.closePath();
       mesh(capGeo(tl, -0.006), M.tail);
-      mesh(sideGeo({ side, x0: 0.0, x1: 0.17, y0: (x) => 0.9 + x * 0.3, y1: (x) => 1.6 - x * 0.9, off: 0.006, nu: 8, nv: 6 }), M.tail);
+      // боковая часть фонаря: узкая, со скруглённым верхом
+      mesh(sideGeo({ side, x0: 0.0, x1: 0.11, y0: (x) => 0.9 + x * 0.6, y1: (x) => 1.6 - 14 * x * x, off: 0.006, nu: 10, nv: 8 }), M.tail);
       const rev = mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.012, 24), M.lamp);
       rev.rotation.z = Math.PI / 2;
-      rev.position.set(-0.01, 1.08, side * (zi + 0.055));
+      rev.position.set(-0.01, 1.08, side * (zi + zo) / 2);
     }
     // стоп-сигнал
     box(0.03, 0.04, 0.3, 0.01, M.tail, 0.0, 1.79, 0, body);
-    // бампер и порог
-    box(0.2, 0.24, 2 * halfWidth(0.07, 0.45) + 0.02, 0.06, M.plastic, 0.07, 0.38, 0, body);
-    box(0.12, 0.03, 1.5, 0.01, M.plastic, 0.03, 0.47, 0, body);
+    // задний бампер: объёмный, углы уходят вперёд к аркам, сверху — ступенька с рифлением
+    const zE = halfWidth(0.04, 0.4) + 0.02;
+    const rearX = (z) => -0.07 + 0.1 * Math.pow(Math.min(1, Math.abs(z) / zE), 3);
+    const rOut = [];
+    const rSide = [];
+    for (let i = 0; i <= 10; i++) {
+      const x = 0.3 - ((0.3 - 0.04) * i) / 10;
+      rSide.push(new THREE.Vector2(x, halfWidth(x, 0.4) + 0.02));
+    }
+    rSide.forEach((p) => rOut.push(new THREE.Vector2(p.x, p.y)));
+    for (let i = 1; i < 26; i++) {
+      const z = zE - (2 * zE * i) / 26;
+      rOut.push(new THREE.Vector2(rearX(z), z));
+    }
+    rSide.slice().reverse().forEach((p) => rOut.push(new THREE.Vector2(p.x, -p.y)));
+    const rLo = (i) => 0.27 + 0.06 * Math.max(0, rOut[i].x - 0.03) / 0.27;
+    const rHi = () => 0.5;
+    const rProf = (v) => 0.015 - 0.04 * Math.pow(1 - v, 3) - 0.01 * Math.pow(v, 4);
+    mesh(bumperGeo(rOut, rLo, rHi, rProf, 0.2), M.plastic);
+    // рифлёная ступенька под порогом проёма
+    for (let i = 0; i < 6; i++) box(0.012, 0.008, 1.3, 0.003, M.rubber, -0.05 + i * 0.022, 0.503, 0, body);
+    // катафоты, датчики парковки, противотуманный фонарь
+    for (const side of [-1, 1]) {
+      box(0.012, 0.03, 0.1, 0.006, M.tail, rearX(side * 0.7) - 0.008, 0.33, side * 0.7, body);
+      for (const z of [0.18, 0.5]) {
+        const sn = mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.01, 16), M.plasticMid);
+        sn.rotation.z = Math.PI / 2;
+        sn.position.set(rearX(side * z) - 0.012, 0.42, side * z);
+      }
+    }
+    box(0.012, 0.035, 0.08, 0.006, M.tail, rearX(-0.3) - 0.008, 0.3, -0.3, body);
   }
 
   // ----- пол, перегородки, колёсные ниши внутри
   // пол грузового отсека: чёрное резиновое покрытие с рифлением и проушины крепления груза
-  box(2.42, 0.04, 1.62, 0, M.rubber, 0.05 + 2.42 / 2, 0.48, 0, interior);
+  box(X_B2 - 0.1, 0.04, 1.62, 0, M.rubber, 0.05 + (X_B2 - 0.1) / 2, 0.48, 0, interior);
   for (let i = 0; i < 22; i++) box(0.012, 0.006, 1.5, 0, M.plastic, 0.12 + i * 0.105, 0.503, 0, interior);
-  for (const x of [0.2, 2.3]) for (const z of [-0.62, 0.62]) {
+  for (const x of [0.2, 1.25, 2.3]) for (const z of [-0.62, 0.62]) {
     const ring = mesh(new THREE.TorusGeometry(0.03, 0.006, 6, 16), M.steel, interior);
     ring.rotation.x = Math.PI / 2;
     ring.position.set(x, 0.51, z);
@@ -567,7 +750,7 @@ export function buildCar(M) {
   }
   // перегородка «кабина / грузовой отсек» с окном, как у серийного Doblò Cargo
   {
-    const XP = 2.47;
+    const XP = X_B2 - 0.05;
     const outline = roundedRectShape(-0.84, 0.5, 0.84, 1.77, 0.02, 0.17);
     const win = roundedRectShape(-0.38, 1.34, 0.38, 1.6, 0.05);
     outline.holes.push(win);
@@ -668,15 +851,16 @@ export function buildCar(M) {
     box(0.22, 0.04, 0.06, 0.015, M.plastic, x0 + 0.35, 0.93, side * (HW - 0.1), g);
     box(0.35, 0.06, 0.03, 0.01, M.plasticMid, (x0 + x1) / 2, 0.6, side * (HW - 0.095), g);
     // молдинг и ручка
-    mesh(sideGeo({ side, x0: x0 + 0.01, x1: x1 - 0.01, y0: 0.66, y1: 0.74, off: 0.008, nu: 20, nv: 1 }), M.plastic, g);
+    mesh(sideGeo({ side, x0: x0 + 0.01, x1: x1 - 0.01, y0: 0.47, y1: 0.54, off: 0.008, nu: 20, nv: 1 }), M.plastic, g);
     box(0.035, 0.14, 0.03, 0.012, M.plastic, x0 + 0.1, 0.98, side * (HW + 0.012), g);
     // зеркало
     const arm = box(0.1, 0.05, 0.12, 0.02, M.plastic, X_A - 0.1, 1.12, side * (HW + 0.04), g);
     void arm;
-    const housing = box(0.11, 0.24, 0.2, 0.05, M.mirror, X_A - 0.12, 1.18, side * (HW + 0.17), g);
+    const housing = box(0.12, 0.3, 0.2, 0.05, M.mirror, X_A - 0.12, 1.2, side * (HW + 0.13), g);
     void housing;
     const mirror = mesh(new THREE.PlaneGeometry(0.18, 0.14), M.chrome, g, false);
-    mirror.position.set(X_A - 0.175, 1.18, side * (HW + 0.17));
+    mirror.position.set(X_A - 0.182, 1.2, side * (HW + 0.13));
+    mirror.scale.y = 1.6;
     mirror.rotation.y = -Math.PI / 2;
     body.add(pivot);
     pivot.userData.doorId = id;
@@ -699,7 +883,7 @@ export function buildCar(M) {
     mesh(sideGeo({ side, x0, x1, y0: Y_SILL, y1: top, nu: 24, nv: 16 }), M.paint, g);
     emboss(side, x0 + 0.1, x1 - 0.1, 1.1, 1.64, g);
     mesh(sideGeo({ side, x0: x0 + 0.02, x1: x1 - 0.02, y0: Y_SILL + 0.03, y1: (x) => top(x) - 0.03, off: -0.05, nu: 20, nv: 10 }), M.paintInner, g);
-    mesh(sideGeo({ side, x0: x0 + 0.01, x1: x1 - 0.01, y0: 0.66, y1: 0.74, off: 0.008, nu: 20, nv: 1 }), M.plastic, g);
+    mesh(sideGeo({ side, x0: x0 + 0.01, x1: x1 - 0.01, y0: 0.47, y1: 0.54, off: 0.008, nu: 20, nv: 1 }), M.plastic, g);
     box(0.035, 0.14, 0.03, 0.012, M.plastic, x1 - 0.06, 0.98, side * (HW + 0.012), g);
     box(0.03, 0.18, 0.04, 0.012, M.plastic, x1 - 0.06, 1.0, side * (HW - 0.07), g);
     body.add(g);
@@ -722,40 +906,35 @@ export function buildCar(M) {
   // ----- распашные задние двери (асимметрия 60/40, открытие до 180°)
   const makeRear = (side) => {
     const id = side < 0 ? 'rl' : 'rr';
-    const hingeZ = side < 0 ? RD.z0 : RD.z1;
-    const za = side < 0 ? RD.z0 : RD.split + 0.004;
-    const zb = side < 0 ? RD.split - 0.004 : RD.z1;
+    const hingeZ = side * rearEdge(1.0);
+    const za = side < 0 ? -rearEdge(1.0) : RD.split + 0.004;
+    const zb = side < 0 ? RD.split - 0.004 : rearEdge(1.0);
     const pivot = new THREE.Group();
     pivot.position.set(0, 0, hingeZ);
     const g = new THREE.Group();
     g.position.set(0, 0, -hingeZ);
     pivot.add(g);
     const depth = 0.045;
-    const outline = new THREE.Shape();
-    const rT = 0.12;
     const [y0, y1] = [RD.y0 + 0.004, RD.y1 - 0.004];
-    // скругляем только внешний верхний угол
-    if (side < 0) {
-      outline.moveTo(za, y0);
-      outline.lineTo(zb, y0);
-      outline.lineTo(zb, y1);
-      outline.lineTo(za + rT, y1);
-      outline.quadraticCurveTo(za, y1, za, y1 - rT);
-    } else {
-      outline.moveTo(za, y0);
-      outline.lineTo(zb, y0);
-      outline.lineTo(zb, y1 - rT);
-      outline.quadraticCurveTo(zb, y1, zb - rT, y1);
-      outline.lineTo(za, y1);
-    }
-    outline.closePath();
+    const outline = rearShape(za, zb, y0, y1, 0.004, side);
     const geo = new THREE.ExtrudeGeometry(outline, { depth, bevelEnabled: false, curveSegments: 8 });
     const panel = mesh(geo, M.paint, g);
     panel.rotation.y = -Math.PI / 2;
     panel.position.x = depth;
     // обшивка изнутри
-    const trimShape = roundedRectShape(za + 0.05, y0 + 0.05, zb - 0.05, y1 - 0.06, 0.03);
-    mesh(capGeo(trimShape, depth + 0.012), M.paintInner, g);
+    const frame = rearShape(side < 0 ? za : za + 0.03, side < 0 ? zb - 0.03 : zb, y0 + 0.03, y1 - 0.03, 0.035, side, 0.1);
+    const w = zb - za;
+    frame.holes.push(roundedRectShape(za + 0.1, y0 + 0.12, zb - 0.1, 0.88, 0.08));
+    frame.holes.push(roundedRectShape(za + 0.1 + (side < 0 ? 0.06 : 0), 1.04, zb - 0.1 - (side > 0 ? 0.06 : 0), y1 - 0.14, 0.08));
+    const fg = new THREE.ExtrudeGeometry(frame, { depth: 0.035, bevelEnabled: true, bevelThickness: 0.008, bevelSize: 0.008, bevelSegments: 2, curveSegments: 8 });
+    const fm = mesh(fg, M.paintInner, g);
+    fm.rotation.y = -Math.PI / 2;
+    fm.position.x = depth + 0.045;
+    // механизм замка и тяги
+    const lockZ = side < 0 ? zb - 0.12 : za + 0.12;
+    box(0.03, 0.14, 0.08, 0.01, M.steelBlack, depth + 0.05, 0.95, lockZ, g);
+    box(0.012, y1 - y0 - 0.3, 0.012, 0, M.steel, depth + 0.045, (y0 + y1) / 2, lockZ, g);
+    void w;
     // ручка, номер
     // чёрная накладка поперёк дверей: на левой — номер и ручка, на правой — эмблема
     if (side < 0) {

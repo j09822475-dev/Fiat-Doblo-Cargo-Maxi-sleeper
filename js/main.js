@@ -143,7 +143,7 @@ const VIEWS = {
   side: { label: 'Сбоку', cam: W(2.0, 1.55, 4.2), target: W(1.75, 0.95, 0), open: ['sr', 'fr'] },
   top: { label: 'Сверху', cam: W(CX + 0.6, 6.4, 0.9), target: W(CX, 0.6, 0), roofOff: true },
   driver: { label: 'Водитель', inside: true, pos: W(2.74, 1.47, -0.42), yaw: 0.05, pitch: -0.13 },
-  sleeper: { label: 'Грузовой отсек', inside: true, pos: W(2.3, 1.45, 0.05), yaw: Math.PI, pitch: -0.28 },
+  sleeper: { label: 'Грузовой отсек', inside: true, pos: W(2.44, 1.45, 0.05), yaw: Math.PI, pitch: -0.28 },
 };
 
 let mode = 'outside';
@@ -636,4 +636,4 @@ function snap() {
   for (const d of Object.values(doors)) d.t = d.target;
   rearWide.v = rearWide.target;
 }
-window.doblo = { snap, goView, setDoor, toggleDoor, setAll, setRoof, setXray, setWide, setSpin, setColor, setPanel, doors, camera, controls, look };
+window.doblo = { renderer, scene, model, snap, goView, setDoor, toggleDoor, setAll, setRoof, setXray, setWide, setSpin, setColor, setPanel, doors, camera, controls, look };
