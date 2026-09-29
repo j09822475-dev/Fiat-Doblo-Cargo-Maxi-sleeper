@@ -244,6 +244,7 @@ function renderToolbar() {
 
   fill(tb,
     h('button', { class: 'tb mobile-only', type: 'button', onclick: () => toggleDrawer('left') }, 'Состав'),
+    h('button', { class: 'tb mobile-only', type: 'button', onclick: () => toggleDrawer('right') }, 'Панель'),
     h('button', {
       class: 'btn-run', type: 'button', id: 'run', disabled: ui.running, 'data-stale': String(ui.stale && !!ui.result),
       title: 'Проверить коллизии, зазоры, движение и нормативы (Ctrl+Enter)', onclick: runChecks,
@@ -273,7 +274,7 @@ function renderToolbar() {
         ...[['layer', 'по слоям'], ['material', 'по материалу'], ['thickness', 'по толщине'], ['status', 'по результату']].map(([v, t]) => h('option', { value: v, selected: ui.colorMode === v }, t))),
     ),
     h('div', { class: 'tgroup' },
-      tbtn('Карта зазоров', ui.heat, () => { ui.heat = !ui.heat; viewer.showHeatmap(ui.heat && ui.result ? ui.result.profiles : null, ruleLimits); renderToolbar(); }, 'Точки вдоль стыков: зелёные — в норме, жёлтые — у границы, красные — вне нормы'),
+      tbtn('Карта зазоров', ui.heat, () => { ui.heat = !ui.heat; viewer.showHeatmap(ui.heat && ui.result ? ui.result.profiles : null, ruleLimits); renderToolbar(); renderHud(); if (ui.heat && !ui.result) alertBox('Сначала запустите проверку — карта строится по её результатам.'); }, 'Точки вдоль стыков: зелёные — в норме, жёлтые — у границы, красные — вне нормы'),
       tbtn('Линейка', ui.tool === 'measure', () => { ui.tool = ui.tool === 'measure' ? 'select' : 'measure'; ui.meas = []; viewer.showMeasure(null, null); renderToolbar(); renderStatus(); }, 'Расстояние между двумя точками (M)'),
     ),
     h('div', { class: 'tgroup desktop-only' },
@@ -281,7 +282,6 @@ function renderToolbar() {
       tbtn('Открыть', null, openProject, 'Загрузить проект из JSON'),
       tbtn('Сброс', null, resetProject, 'Вернуть проект по умолчанию'),
     ),
-    h('button', { class: 'tb mobile-only', type: 'button', onclick: () => toggleDrawer('right') }, 'Панель'),
   );
 }
 
@@ -732,6 +732,11 @@ function bodyPane() {
 function renderHud() {
   const hud = $('hud');
   hud.querySelectorAll('.hud-card.fixed').forEach((n) => n.remove());
+  if (ui.heat && ui.result) {
+    hud.prepend(h('div', { class: 'hud-card fixed' },
+      h('div', { class: 'k' }, 'Карта зазоров'),
+      h('div', {}, h('span', { style: 'color:#16a34a' }, '● '), 'в норме  ', h('span', { style: 'color:#f59e0b' }, '● '), 'у границы (0,3 мм)  ', h('span', { style: 'color:#dc2626' }, '● '), 'вне нормы')));
+  }
   const issue = ui.result?.issues.find((i) => i.id === ui.activeIssue);
   if (issue) {
     hud.prepend(h('div', { class: 'hud-card fixed' },
@@ -739,7 +744,7 @@ function renderHud() {
       h('div', {}, issue.title),
       h('div', { class: 'mono' }, `${issue.value !== undefined ? `${fmt(issue.value)} мм · ` : ''}${issue.limit ?? ''}`),
       issue.pose && h('div', { class: 'mono' }, `положение: ${issue.pose.label}`),
-      h('div', { class: 'mono', style: 'color:var(--muted)' }, `X ${issue.at[0]} · Y ${issue.at[1]} · Z ${issue.at[2]}`),
+      h('div', { class: 'mono', style: 'color:var(--muted)' }, `X ${Math.round(issue.at[0])} · Y ${Math.round(issue.at[1])} · Z ${Math.round(issue.at[2])} мм`),
     ));
   }
 }

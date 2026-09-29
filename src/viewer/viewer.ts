@@ -271,6 +271,7 @@ export class Viewer {
       const expl = v.center.clone().sub(center).multiplyScalar(this.explode * 0.9);
       v.mesh.matrix.makeTranslation(expl.x, expl.y, expl.z).multiply(m);
     }
+    this.syncHeat();
   }
 
   // ------------------------------------------------------------ камера
@@ -280,7 +281,8 @@ export class Viewer {
 
   view(name: 'iso' | 'front' | 'side' | 'top' | 'rear' | 'left') {
     const t = this.worldOf([this.project.vehicle.wheelbase / 2, 0, 900]);
-    const d = 9000;
+    // на узком экране отъезжаем дальше, чтобы машина целиком помещалась по ширине
+    const d = 9000 * Math.max(1, 0.95 / this.camera.aspect);
     const dirs: Record<string, [number, number, number]> = {
       iso: [0.55, 0.35, 0.75], front: [1, 0.08, 0], rear: [-1, 0.08, 0], side: [0, 0.08, 1], left: [0, 0.08, -1], top: [0.001, 1, 0],
     };
@@ -293,7 +295,7 @@ export class Viewer {
   }
 
   /** Показать точку замечания: камера подлетает, ставится маркер. */
-  focusPoint(p: Vec3, dist = 1400) {
+  focusPoint(p: Vec3, dist = 2600) {
     const w = this.worldOf(p);
     const dir = this.camera.position.clone().sub(this.controls.target).normalize();
     this.flyTo(w.clone().add(dir.multiplyScalar(dist)), w);
@@ -325,6 +327,7 @@ export class Viewer {
   // ------------------------------------------------------------ карта зазоров и измерения
   showHeatmap(profiles: GapProfile[] | null, limits: (rule: string) => { min: number; max: number }) {
     this.heat.clear();
+    this.heatProfiles = null;
     if (!profiles) return;
     const pos: number[] = [];
     const col: number[] = [];
@@ -345,6 +348,42 @@ export class Viewer {
     const pts = new THREE.Points(g, new THREE.PointsMaterial({ size: 9, vertexColors: true, depthTest: false, sizeAttenuation: false, transparent: true }));
     pts.renderOrder = 5;
     this.heat.add(pts);
+    this.heatProfiles = profiles;
+    this.heatLimits = limits;
+    this.syncHeat();
+  }
+
+  /** Точки карты зазоров следуют за деталью A стыка (разнесение, открывание). */
+  private heatProfiles: GapProfile[] | null = null;
+  private heatLimits: (rule: string) => { min: number; max: number } = () => ({ min: 0, max: Infinity });
+  private syncHeat() {
+    if (!this.heatProfiles) return;
+    this.heat.clear();
+    const c = new THREE.Color();
+    for (const pr of this.heatProfiles) {
+      const { min, max } = this.heatLimits(pr.rule);
+      const pos: number[] = [];
+      const col: number[] = [];
+      for (const s of pr.samples) {
+        pos.push(...s.p);
+        const bad = s.gap < min || s.gap > max;
+        const near = s.gap < min + 0.3 || s.gap > max - 0.3;
+        c.set(bad ? '#dc2626' : near ? '#f59e0b' : '#16a34a');
+        col.push(c.r, c.g, c.b);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      const pts = new THREE.Points(g, new THREE.PointsMaterial({ size: 8, vertexColors: true, depthTest: false, sizeAttenuation: false, transparent: true }));
+      pts.renderOrder = 5;
+      pts.matrixAutoUpdate = false;
+      const v = this.parts.get(pr.a);
+      if (v) {
+        pts.matrix.copy(v.mesh.matrix);
+        pts.visible = v.mesh.visible;
+      }
+      this.heat.add(pts);
+    }
   }
 
   showMeasure(a: Vec3 | null, b: Vec3 | null) {
