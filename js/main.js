@@ -117,7 +117,8 @@ function clampLookPos() {
 // ---------------------------------------------------------------- двери
 
 const doors = model.doors;
-const doorOrder = ['fl', 'fr', 'sl', 'sr', 'rl', 'rr', 'hood'];
+const doorOrder = ['fl', 'fr', 'sr', 'hood', 'rl', 'rr'];
+const DOOR_COUNT = doorOrder.length - 1; // без капота
 for (const d of Object.values(doors)) {
   d.t = 0;
   d.target = 0;
@@ -142,7 +143,7 @@ const VIEWS = {
   side: { label: 'Сбоку', cam: W(2.0, 1.55, 4.2), target: W(1.75, 0.95, 0), open: ['sr', 'fr'] },
   top: { label: 'Сверху', cam: W(CX + 0.6, 6.4, 0.9), target: W(CX, 0.6, 0), roofOff: true },
   driver: { label: 'Водитель', inside: true, pos: W(2.74, 1.47, -0.42), yaw: 0.05, pitch: -0.13 },
-  sleeper: { label: 'Салон', inside: true, pos: W(2.47, 1.56, 0.05), yaw: Math.PI, pitch: -0.2 },
+  sleeper: { label: 'Грузовой отсек', inside: true, pos: W(2.36, 1.52, 0.05), yaw: Math.PI, pitch: -0.2 },
   bed: { label: 'С кровати', inside: true, pos: W(1.78, 1.16, 0.22), yaw: Math.PI + 0.12, pitch: -0.06, open: ['rl', 'rr'] },
 };
 
@@ -336,8 +337,8 @@ function syncUI() {
   $('#opt-wide').checked = state.wide;
   $('#opt-spin').checked = state.spin;
   const openCount = doorOrder.filter((id) => id !== 'hood' && doors[id].target > 0.5).length;
-  $('#quick-doors').textContent = openCount === 6 ? 'Закрыть двери' : 'Открыть двери';
-  $('#door-count').textContent = `${openCount} из 6 открыто`;
+  $('#quick-doors').textContent = openCount === DOOR_COUNT ? 'Закрыть двери' : 'Открыть двери';
+  $('#door-count').textContent = `${openCount} из ${DOOR_COUNT} открыто`;
   $('#go-inside').textContent = mode === 'inside' ? 'Наружу' : 'Внутрь';
 }
 
@@ -636,4 +637,4 @@ function snap() {
   for (const d of Object.values(doors)) d.t = d.target;
   rearWide.v = rearWide.target;
 }
-window.doblo = { snap, goView, setDoor, toggleDoor, setAll, setRoof, setXray, setWide, setSpin, setColor, setPanel, doors, camera, controls };
+window.doblo = { snap, goView, setDoor, toggleDoor, setAll, setRoof, setXray, setWide, setSpin, setColor, setPanel, doors, camera, controls, look };

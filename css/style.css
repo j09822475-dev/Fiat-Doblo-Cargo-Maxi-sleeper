@@ -243,7 +243,6 @@ button:focus-visible, .switch:focus-within {
 .door-state { grid-column: 1 / -1; font-size: var(--step--1); color: var(--muted); }
 .door[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
 .door[aria-pressed="true"] .door-state { color: var(--accent); font-weight: 600; }
-.door:last-child { grid-column: 1 / -1; }
 
 .view-grid { display: flex; flex-wrap: wrap; gap: 0.35rem; }
 .view {
@@ -394,7 +393,6 @@ body[data-mode="inside"] .brand { opacity: 0; transition: opacity 0.3s; }
   .door-grid { grid-template-columns: 1fr 1fr 1fr; }
   .door { min-height: 48px; }
   .door-name { font-size: var(--step--1); }
-  .door:last-child { grid-column: auto; }
   .help {
     bottom: auto;
     top: calc(env(safe-area-inset-top, 0px) + var(--gutter) + 2.6rem);
