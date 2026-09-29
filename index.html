@@ -3,87 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Doblò Cargo Maxi 3D</title>
-<meta name="description" content="Интерактивная WebGL-модель цельнометаллического фургона Fiat Doblò Cargo Maxi с кабиной и грузовым отсеком.">
+<title>Кузов Doblò Cargo Maxi</title>
+<meta name="description" content="Система проектирования кузова: послойный просмотр деталей, проверка коллизий, зазоров и перепадов по справочным нормам.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600&family=Unbounded:wght@500;700&family=JetBrains+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="css/style.css">
-<script type="importmap">
-{ "imports": { "three": "./lib/three.module.min.js", "three/addons/": "./lib/addons/" } }
-</script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="./src/app/style.css">
 </head>
-<body data-mode="outside">
-<!--PAGE-->
-<canvas id="scene" aria-label="3D-модель Fiat Doblò Cargo Maxi. Перетаскивайте, чтобы вращать; нажмите на дверь, чтобы открыть."></canvas>
-
-<header class="brand">
-  <p class="eyebrow">Fiat · цельнометаллический фургон · L2H1</p>
-  <h1>Doblò Cargo Maxi</h1>
-  <dl class="spec">
-    <div><dt>Д × Ш × В</dt><dd>4740 × 1832 × 1845 мм</dd></div>
-    <div><dt>База</dt><dd>3105 мм</dd></div>
-    <div><dt>Грузовой отсек</dt><dd>4,2 м³</dd></div>
-  </dl>
-</header>
-
-<div class="inside-bar">
-  <span>Вы в салоне</span>
-  <button type="button" id="exit-inside" class="btn-accent">Выйти наружу <kbd>Esc</kbd></button>
-</div>
-
-<aside id="panel" class="panel" aria-label="Управление моделью">
-  <div class="panel-head">
-    <button type="button" id="panel-toggle" class="panel-toggle" aria-expanded="true" aria-controls="panel-body">
-      <span class="grip" aria-hidden="true"></span>
-      <span class="panel-title">Управление</span>
-      <span id="door-count" class="muted">0 из 5 открыто</span>
-    </button>
-    <div class="quick">
-      <button type="button" id="quick-doors" class="btn-accent">Открыть двери</button>
-      <button type="button" id="go-inside" class="btn-ghost">Внутрь</button>
+<body>
+<div id="app" class="app">
+  <header class="top">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div class="brand-text">
+        <strong>Кузов</strong>
+        <span id="project-title">Fiat Doblò Cargo Maxi</span>
+      </div>
     </div>
-  </div>
-  <div id="panel-body" class="panel-body">
-    <section>
-      <h2>Двери</h2>
-      <div id="door-grid" class="door-grid"></div>
-      <div class="row">
-        <button type="button" id="open-all" class="btn-ghost">Открыть все <kbd>O</kbd></button>
-        <button type="button" id="close-all" class="btn-ghost">Закрыть все <kbd>C</kbd></button>
-      </div>
-    </section>
-    <section>
-      <h2>Точка обзора <kbd>V</kbd></h2>
-      <div id="view-grid" class="view-grid"></div>
-    </section>
-    <section>
-      <h2>Режимы</h2>
-      <div class="toggles">
-        <label class="switch" for="opt-roof"><input type="checkbox" id="opt-roof"><span>Снять крышу</span><kbd>T</kbd></label>
-        <label class="switch" for="opt-xray"><input type="checkbox" id="opt-xray"><span>Прозрачный кузов</span><kbd>X</kbd></label>
-        <label class="switch" for="opt-wide"><input type="checkbox" id="opt-wide"><span>Задние двери на 180°</span><kbd>Z</kbd></label>
-        <label class="switch" for="opt-spin"><input type="checkbox" id="opt-spin"><span>Автовращение</span><kbd>␣</kbd></label>
-      </div>
-    </section>
-    <section>
-      <h2>Цвет кузова</h2>
-      <div id="swatches" class="swatches"></div>
-    </section>
-  </div>
-</aside>
-
-<footer class="help">
-  <p class="help-desktop">
-    <b>Мышь:</b> тянуть — вращать, колесо — зум, правая кнопка — сдвиг, клик по двери — открыть, двойной клик — приблизить.
-    <b>Клавиши:</b> <kbd>1</kbd>–<kbd>6</kbd> двери, <kbd>←↑↓→</kbd> обзор, <kbd>I</kbd> внутрь, <kbd>WASD</kbd> шаг в салоне.
-  </p>
-  <p class="help-touch">Палец — вращать · щипок — зум · два пальца — сдвиг · тап по двери — открыть</p>
-</footer>
-
-<div id="tip" class="tip" hidden></div>
-<noscript><p class="fallback">Для 3D-модели нужен JavaScript и WebGL.</p></noscript>
-<!--/PAGE-->
-<script type="module" src="js/main.js"></script>
+    <div class="toolbar" id="toolbar"></div>
+  </header>
+  <aside class="side left" id="left" aria-label="Состав изделия и слои"></aside>
+  <main class="stage">
+    <canvas id="view" aria-label="3D-модель кузова"></canvas>
+    <div class="stage-hud" id="hud"></div>
+    <div class="statusbar" id="statusbar"></div>
+  </main>
+  <aside class="side right" id="right" aria-label="Свойства, проверки, нормы"></aside>
+</div>
+<script type="module" src="./src/app/main.ts"></script>
 </body>
 </html>
