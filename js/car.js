@@ -80,19 +80,50 @@ const topLine = smoothProfile(
 
 const shoulder = (x) => topLine(x) - R_ROOF;
 
+// Передняя точка носа на высоте y: внизу нос самый длинный, выше плавно уходит назад —
+// так торец скругляется и в профиле (кромка капота заворачивает к решётке).
+function noseEnd(y) {
+  const k = Math.min(1, Math.max(0, (y - 0.72) / 0.38));
+  return DIM.L + 0.012 - 0.11 * k * k;
+}
+
+// Завал боковин вверху и подворот внизу (вычитается из ширины в плане).
+function tuck(y) {
+  let d = 0;
+  if (y > 1.0) d += 0.15 * Math.pow(Math.min(1.2, (y - 1.0) / 0.75), 1.5); // крыша ≈1,45 м
+  if (y < 0.5) d += 0.025 * Math.pow((0.5 - y) / 0.16, 2);
+  return d;
+}
+
 // Полуширина кузова: сужение носа в плане, завал боковин вверху и подворот внизу.
 function halfWidth(x, y) {
   let w = HW;
   // нос: до NOSE_X плавное сужение, дальше крылья в плане идут по суперэллипсу —
   // той же кривой, что и бампер, поэтому крыло, фара и бампер сходятся без ступенек
   if (x > NOSE_X) {
-    const u = Math.min(1, (x - NOSE_X) / (DIM.L + 0.012 - NOSE_X));
+    const u = Math.min(1, (x - NOSE_X) / (noseEnd(y) - NOSE_X));
     w = NOSE_W * Math.pow(1 - Math.pow(u, 4), 0.25);
   } else if (x > 4.1) w -= 0.13 * Math.pow((x - 4.1) / 0.65, 2.4);
   if (x < 0.3) w -= 0.07 * Math.pow((0.3 - x) / 0.3, 2.2); // скруглённые задние углы в плане
-  if (y > 1.0) w -= 0.15 * Math.pow(Math.min(1.2, (y - 1.0) / 0.75), 1.5); // завал боковин: крыша ≈1,45 м
-  if (y < 0.5) w -= 0.025 * Math.pow((0.5 - y) / 0.16, 2);
-  return w;
+  return Math.max(0.002, w - tuck(y));
+}
+
+// Обратная функция: x поверхности носа в точке (z, y). Нужна для деталей на скруглённом торце.
+function xFront(z, y) {
+  const w = Math.abs(z) + tuck(y);
+  if (w >= NOSE_W) return NOSE_X;
+  return NOSE_X + (noseEnd(y) - NOSE_X) * Math.pow(1 - Math.pow(w / NOSE_W, 4), 0.25);
+}
+
+// Высота верха сечения кузова в точке (x, z): крыша/капот со скруглёнными кромками.
+function sectionTop(x, z) {
+  const ys = topLine(x) - R_ROOF;
+  const hwS = halfWidth(x, ys);
+  const cz = hwS - R_ROOF;
+  const az = Math.abs(z);
+  if (az <= cz) return topLine(x) + 0.012 * (1 - (az / cz) ** 2);
+  if (az <= hwS) return ys + Math.sqrt(Math.max(0, R_ROOF ** 2 - (az - cz) ** 2));
+  return ys;
 }
 
 // Верх колёсной арки (выше неё может быть панель кузова).
@@ -180,6 +211,27 @@ function topGeo({ x0, x1, s0 = -1, s1 = 1, off = 0, nu = 24, nv = 24 }) {
     const a = fx0(s);
     const b = fx1(s);
     topPoint(a + (b - a) * u, s, off, p);
+  });
+}
+
+// Поверхность на скруглённом торце носа: параметризация по z (t) и по высоте (v).
+// z ограничивается швом с крыльями (NOSE_SEAM), так что торец точно стыкуется с боковинами.
+const NOSE_SEAM = DIM.L - 0.1;
+function frontGeo({ z0, z1, y0, y1, off = 0, nu = 24, nv = 16 }) {
+  const f0 = fn(y0);
+  const f1 = fn(y1);
+  return gridGeometry(nu, nv, (u, v, p) => {
+    let z = z0 + (z1 - z0) * u;
+    const lo = f0(z);
+    const hi = Math.max(lo, f1(z));
+    const y = lo + (hi - lo) * v;
+    const lim = halfWidth(NOSE_SEAM, y);
+    z = Math.max(-lim, Math.min(lim, z));
+    // смещение по нормали к поверхности носа (у краёв она смотрит вбок)
+    const e = 0.004;
+    const dxdz = (xFront(z + e, y) - xFront(z - e, y)) / (2 * e);
+    const nl = Math.hypot(1, dxdz);
+    p.set(xFront(z, y) + off / nl, y, z - (off * dxdz) / nl);
   });
 }
 
@@ -404,7 +456,7 @@ export function buildCar(M) {
   // ----- кузов: боковины, стойки, пороги
   for (const side of [-1, 1]) {
     const hasSlide = side > 0; // у этого фургона сдвижная дверь только справа
-    mesh(sideGeo({ side, x0: X_A + GAP, x1: DIM.L, y0: Y_BOTTOM, nu: 40, nv: 14 }), M.paint);
+    mesh(sideGeo({ side, x0: X_A + GAP, x1: NOSE_SEAM, y0: Y_BOTTOM, nu: 40, nv: 14 }), M.paint);
     mesh(sideGeo({ side, x0: X_B, x1: X_A, y0: doorTop, nu: 20, nv: 2 }), M.paint);
     mesh(sideGeo({ side, x0: X_B2, x1: X_B, y0: Y_BOTTOM, nu: 3, nv: 14 }), M.paint);
     if (hasSlide) mesh(sideGeo({ side, x0: X_SL, x1: X_B2, y0: doorTop, nu: 20, nv: 2 }), M.paint);
@@ -486,9 +538,9 @@ export function buildCar(M) {
     const inner = new THREE.Group();
     inner.position.set(-px, -py, 0);
     pivot.add(inner);
-    const hood = mesh(topGeo({ x0: 3.99, x1: 4.745, nu: 24, nv: 30 }), M.paint, inner);
+    const hood = mesh(topGeo({ x0: 3.99, x1: NOSE_SEAM, nu: 24, nv: 30 }), M.paint, inner);
     hood.userData.part = true;
-    const under = mesh(topGeo({ x0: 4.03, x1: 4.7, off: -0.025, s0: -0.9, s1: 0.9, nu: 12, nv: 16 }), M.plasticMid, inner);
+    const under = mesh(topGeo({ x0: 4.03, x1: NOSE_SEAM - 0.03, off: -0.025, s0: -0.9, s1: 0.9, nu: 12, nv: 16 }), M.plasticMid, inner);
     body.add(pivot);
     doors.hood = {
       id: 'hood', name: 'Капот', key: '6', object: pivot, max: 1,
@@ -507,7 +559,9 @@ export function buildCar(M) {
   }
 
   // ----- нос: окрашенный торец, решётка под кромкой капота, высокие стреловидные фары, чёрный бампер
-  mesh(capGeo(sectionShape(DIM.L - 0.004), DIM.L - 0.004), M.paint);
+  const ZN = halfWidth(NOSE_SEAM, 0.7) + 0.01;
+  const noseTop = (z) => sectionTop(NOSE_SEAM, z);
+  mesh(frontGeo({ z0: -ZN, z1: ZN, y0: Y_BOTTOM, y1: noseTop, nu: 48, nv: 24 }), M.paint);
   {
     const Y_BUMP = 0.75;   // верх бампера по центру = низ решётки
     const Y_GR = 0.9;      // верх решётки = кромка капота
@@ -519,40 +573,38 @@ export function buildCar(M) {
     gr.lineTo(HL_ZI + 0.03, Y_GR);
     gr.lineTo(-HL_ZI - 0.03, Y_GR);
     gr.closePath();
-    mesh(capGeo(gr, DIM.L + 0.003), M.plastic);
+    mesh(frontGeo({ z0: -HL_ZI - 0.01, z1: HL_ZI + 0.01, y0: Y_BUMP - 0.01, y1: Y_GR, off: 0.004, nu: 16, nv: 6 }), M.plastic);
+    void gr;
     for (let i = 0; i < 4; i++) {
       const y = Y_BUMP + 0.03 + i * 0.043;
       const w = 2 * (HL_ZI - 0.04 + ((y - Y_BUMP) / (Y_GR - Y_BUMP)) * 0.05);
-      box(0.012, 0.01, w, 0.003, M.plasticMid, DIM.L + 0.01, y, 0, body);
+      box(0.012, 0.01, w, 0.003, M.plasticMid, xFront(0, y) + 0.01, y, 0, body);
     }
-    for (let i = -6; i <= 6; i++) box(0.012, Y_GR - Y_BUMP - 0.04, 0.008, 0.002, M.plasticMid, DIM.L + 0.01, (Y_BUMP + Y_GR) / 2, i * 0.05, body);
+    for (let i = -6; i <= 6; i++) box(0.012, Y_GR - Y_BUMP - 0.04, 0.008, 0.002, M.plasticMid, xFront(i * 0.05, (Y_BUMP + Y_GR) / 2) + 0.01, (Y_BUMP + Y_GR) / 2, i * 0.05, body);
     // хромированный молдинг по верхней кромке решётки
-    box(0.012, 0.012, 2 * HL_ZI + 0.04, 0.005, M.chrome, DIM.L + 0.012, Y_GR - 0.006, 0, body);
+    box(0.012, 0.012, 2 * HL_ZI + 0.04, 0.005, M.chrome, xFront(0, Y_GR) + 0.012, Y_GR - 0.006, 0, body);
     // эмблема в хромированном кольце
     const bRing = mesh(new THREE.CylinderGeometry(0.052, 0.052, 0.02, 36), M.chrome);
     bRing.rotation.z = Math.PI / 2;
-    bRing.position.set(DIM.L + 0.016, 0.83, 0);
+    bRing.position.set(xFront(0, 0.83) + 0.016, 0.83, 0);
     const bRed = mesh(new THREE.CylinderGeometry(0.042, 0.042, 0.02, 36), M.badge);
     bRed.rotation.z = Math.PI / 2;
-    bRed.position.set(DIM.L + 0.022, 0.83, 0);
+    bRed.position.set(xFront(0, 0.83) + 0.022, 0.83, 0);
     // фары: каплевидные, вытянуты назад по крылу до стойки капота
     // низ фары: на торце ~0.79 м, назад по крылу поднимается к линии капота
     const hlBottom = (x) => 0.87 + 0.13 * Math.pow(Math.max(0, DIM.L - x) / 0.5, 1.3);
     for (const side of [-1, 1]) {
-      mesh(sideGeo({ side, x0: 4.24, x1: DIM.L, y0: hlBottom, y1: 9, off: 0.006, nu: 18, nv: 6 }), M.lamp);
+      mesh(sideGeo({ side, x0: 4.24, x1: NOSE_SEAM, y0: hlBottom, y1: 9, off: 0.006, nu: 18, nv: 6 }), M.lamp);
       // верхняя кромка фары заходит на скругление крыла, выше — линия разъёма капота
-      mesh(topGeo({ x0: (sv) => 4.3 + 1.6 * (1 - Math.abs(sv)), x1: DIM.L, s0: side < 0 ? -1 : 0.8, s1: side < 0 ? -0.8 : 1, off: 0.006, nu: 12, nv: 4 }), M.lamp);
+      mesh(topGeo({ x0: (sv) => 4.3 + 1.6 * (1 - Math.abs(sv)), x1: NOSE_SEAM, s0: side < 0 ? -1 : 0.8, s1: side < 0 ? -0.8 : 1, off: 0.006, nu: 12, nv: 4 }), M.lamp);
       // лицевая часть фары на торце
-      const fShape = new THREE.Shape();
       const zi = HL_ZI;
-      const zo = halfWidth(DIM.L, 0.8);
-      const yTop = shoulder(DIM.L) + 0.02;
-      fShape.moveTo(side * (zi + 0.03), 0.88);
-      fShape.lineTo(side * zo, 0.87);
-      fShape.lineTo(side * zo, yTop);
-      fShape.quadraticCurveTo(side * (zi + 0.02), yTop + 0.02, side * (zi - 0.01), Y_GR - 0.01);
-      fShape.closePath();
-      mesh(capGeo(fShape, DIM.L + 0.002), M.lamp);
+      // лицевая часть фары лежит на скруглённом торце, сверху — до кромки капота
+      mesh(frontGeo({
+        z0: side < 0 ? -ZN : zi, z1: side < 0 ? -zi : ZN,
+        y0: (z) => 0.87 + 0.03 * Math.max(0, 1 - (Math.abs(z) - zi) / 0.08),
+        y1: (z) => noseTop(z) - 0.02, off: 0.006, nu: 18, nv: 8,
+      }), M.lamp);
       // отражатели внутри фары
       // отражатели: один на торце, второй на скруглении крыла, ось — по нормали поверхности
       const onNose = (xx, yy) => {
@@ -563,7 +615,7 @@ export function buildCar(M) {
       };
       const r1 = mesh(new THREE.CylinderGeometry(0.05, 0.055, 0.012, 24), M.chrome);
       r1.rotation.z = Math.PI / 2;
-      r1.position.set(DIM.L + 0.008, 0.93, side * (zi + 0.09));
+      r1.position.set(xFront(zi + 0.09, 0.93) + 0.012, 0.93, side * (zi + 0.09));
       for (const [xx, r] of [[DIM.L - 0.05, 0.042], [DIM.L - 0.15, 0.03]]) {
         const { p, n } = onNose(xx, 0.95);
         const pr = mesh(new THREE.CylinderGeometry(r, r * 1.1, 0.012, 24), M.chrome);
