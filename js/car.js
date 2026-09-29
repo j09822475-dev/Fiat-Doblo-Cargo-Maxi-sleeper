@@ -66,12 +66,12 @@ const topLine = smoothProfile(
   [
     [0.0, 1.815],
     [0.14, 1.842],
-    [2.95, 1.852],
-    [3.1, 1.835],
-    [3.97, 1.15],
-    [4.25, 1.135],
-    [4.6, 1.095],
-    [4.76, 1.04],
+    [2.72, 1.852],
+    [2.88, 1.835],
+    [3.72, 1.17],   // низ лобового стекла (по чертежу ~1,1 м от носа)
+    [4.1, 1.125],
+    [4.5, 1.075],
+    [4.76, 1.01],
   ],
   0.05,
   -0.1,
@@ -423,6 +423,8 @@ export function buildCar(M) {
   };
 
   const doors = {};
+  const X_RF = 2.9;  // передняя кромка крыши (верх лобового стекла)
+  const X_CW = 3.72; // стык лобового стекла с капотом
 
   // Выштамповка большой прямоугольной панели на глухой боковине (как на фото Doblò Cargo):
   // рельефный контур со скруглёнными углами, проложенный по поверхности кузова.
@@ -512,35 +514,35 @@ export function buildCar(M) {
   }
 
   // ----- крыша, лобовое стекло, капот
-  mesh(topGeo({ x0: 0, x1: 3.14, nu: 30, nv: 30 }), M.paint, roof);
+  mesh(topGeo({ x0: 0, x1: X_RF + 0.02, nu: 30, nv: 30 }), M.paint, roof);
   mesh(topGeo({ x0: 0.06, x1: X_B2 - 0.06, off: -0.03, s0: -0.93, s1: 0.93, nu: 10, nv: 20 }), M.paintInner, roof);
-  mesh(topGeo({ x0: 2.55, x1: 3.12, off: -0.03, s0: -0.93, s1: 0.93, nu: 6, nv: 20 }), M.headliner, roof);
-  mesh(topGeo({ x0: 3.14, x1: 3.95, s0: -0.9, s1: 0.9, nu: 20, nv: 24 }), M.glass, body, false);
-  mesh(topGeo({ x0: 3.12, x1: 3.97, s0: -1, s1: -0.9, nu: 20, nv: 4 }), M.plastic);
-  mesh(topGeo({ x0: 3.12, x1: 3.97, s0: 0.9, s1: 1, nu: 20, nv: 4 }), M.plastic);
-  mesh(topGeo({ x0: 3.12, x1: 3.16, s0: -0.9, s1: 0.9, nu: 1, nv: 24, off: 0.001 }), M.plastic);
-  mesh(topGeo({ x0: 3.93, x1: 4.0, s0: -0.9, s1: 0.9, nu: 2, nv: 24, off: 0.002 }), M.plastic);
+  mesh(topGeo({ x0: X_B2 - 0.06, x1: X_RF, off: -0.03, s0: -0.93, s1: 0.93, nu: 6, nv: 20 }), M.headliner, roof);
+  mesh(topGeo({ x0: X_RF + 0.02, x1: X_CW - 0.02, s0: -0.9, s1: 0.9, nu: 20, nv: 24 }), M.glass, body, false);
+  mesh(topGeo({ x0: X_RF, x1: X_CW, s0: -1, s1: -0.9, nu: 20, nv: 4 }), M.plastic);
+  mesh(topGeo({ x0: X_RF, x1: X_CW, s0: 0.9, s1: 1, nu: 20, nv: 4 }), M.plastic);
+  mesh(topGeo({ x0: X_RF, x1: X_RF + 0.04, s0: -0.9, s1: 0.9, nu: 1, nv: 24, off: 0.001 }), M.plastic);
+  mesh(topGeo({ x0: X_CW - 0.04, x1: X_CW + 0.03, s0: -0.9, s1: 0.9, nu: 2, nv: 24, off: 0.002 }), M.plastic);
   // антенна над лобовым стеклом
   {
-    const p = topPoint(3.0, 0, 0, new THREE.Vector3());
+    const p = topPoint(X_RF - 0.12, 0, 0, new THREE.Vector3());
     const ant = mesh(new THREE.CylinderGeometry(0.004, 0.007, 0.4, 8), M.plastic, roof);
-    ant.position.set(2.92, p.y + 0.18, 0);
+    ant.position.set(X_RF - 0.2, p.y + 0.18, 0);
     ant.rotation.z = 0.5;
-    box(0.06, 0.03, 0.04, 0.01, M.plastic, 3.0, p.y + 0.01, 0, roof);
+    box(0.06, 0.03, 0.04, 0.01, M.plastic, X_RF - 0.12, p.y + 0.01, 0, roof);
   }
 
   // капот — открывается
   {
     const pivot = new THREE.Group();
-    const px = 3.99;
+    const px = X_CW + 0.02;
     const py = topLine(px);
     pivot.position.set(px, py, 0);
     const inner = new THREE.Group();
     inner.position.set(-px, -py, 0);
     pivot.add(inner);
-    const hood = mesh(topGeo({ x0: 3.99, x1: NOSE_SEAM, nu: 24, nv: 30 }), M.paint, inner);
+    const hood = mesh(topGeo({ x0: X_CW + 0.02, x1: NOSE_SEAM, nu: 24, nv: 30 }), M.paint, inner);
     hood.userData.part = true;
-    const under = mesh(topGeo({ x0: 4.03, x1: NOSE_SEAM - 0.03, off: -0.025, s0: -0.9, s1: 0.9, nu: 12, nv: 16 }), M.plasticMid, inner);
+    const under = mesh(topGeo({ x0: X_CW + 0.06, x1: NOSE_SEAM - 0.03, off: -0.025, s0: -0.9, s1: 0.9, nu: 12, nv: 16 }), M.plasticMid, inner);
     body.add(pivot);
     doors.hood = {
       id: 'hood', name: 'Капот', key: '6', object: pivot, max: 1,
@@ -818,7 +820,7 @@ export function buildCar(M) {
   }
 
   // моторный щит
-  box(0.05, 0.6, 1.62, 0, M.rubber, 3.97, 0.72, 0, interior);
+  box(0.05, 0.6, 1.62, 0, M.rubber, X_CW - 0.02, 0.72, 0, interior);
 
   // ----- колёса
   const wheels = new THREE.Group();
@@ -1017,6 +1019,7 @@ export function buildCar(M) {
 
   // ---------------------------------------------------------------- кабина
   const cab = new THREE.Group();
+  cab.position.x = X_CW - 3.97; // интерьер построен от стыка стекла 3,97 м
   interior.add(cab);
   {
     // торпедо: профиль в плоскости (x,y), вытянутый по ширине
@@ -1158,10 +1161,10 @@ export function buildCar(M) {
       v.rotation.z = 0.28;
     }
     // полка над кабиной
-    box(0.55, 0.04, 1.5, 0.02, M.headliner, 2.8, 1.63, 0, roof);
-    box(0.03, 0.08, 1.5, 0.01, M.headliner, 2.53, 1.66, 0, roof);
+    box(0.45, 0.04, 1.5, 0.02, M.headliner, X_RF - 0.3, 1.63, 0, roof);
+    box(0.03, 0.08, 1.5, 0.01, M.headliner, X_RF - 0.52, 1.66, 0, roof);
     // плафон
-    box(0.12, 0.02, 0.2, 0.01, M.led, 3.05, 1.8, 0, roof);
+    box(0.12, 0.02, 0.2, 0.01, M.led, X_RF - 0.12, 1.8, 0, roof);
   }
 
   // плафон грузового отсека
