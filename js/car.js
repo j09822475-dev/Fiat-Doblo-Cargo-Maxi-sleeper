@@ -1,4 +1,4 @@
-// Процедурная модель Fiat Doblò Cargo Maxi (кузов 263, L2H1) с жилым модулем «спальник».
+// Процедурная модель цельнометаллического фургона Fiat Doblò Cargo Maxi (кузов 263, L2H1).
 // Система координат модели: X — вдоль машины (0 = задний срез, +X вперёд), Y — вверх, Z — вправо.
 // Единицы — метры. Габариты взяты из техданных: 4740 × 1832 × 1845 мм, база 3105 мм.
 import * as THREE from 'three';
@@ -245,38 +245,6 @@ function rand(seed) {
   return () => ((s = (s * 16807) % 2147483647) / 2147483647);
 }
 
-const woodTexture = () =>
-  canvasTexture(512, 512, (g, w, h) => {
-    const r = rand(7);
-    g.fillStyle = '#c9a37a';
-    g.fillRect(0, 0, w, h);
-    for (let i = 0; i < 90; i++) {
-      const y = r() * h;
-      g.strokeStyle = `rgba(${120 + r() * 40},${80 + r() * 30},${40 + r() * 20},${0.12 + r() * 0.2})`;
-      g.lineWidth = 1 + r() * 3;
-      g.beginPath();
-      g.moveTo(0, y);
-      for (let x = 0; x <= w; x += 32) g.lineTo(x, y + Math.sin(x * 0.02 + i) * (2 + r() * 4));
-      g.stroke();
-    }
-  });
-
-const plaidTexture = () =>
-  canvasTexture(256, 256, (g, w, h) => {
-    g.fillStyle = '#39556b';
-    g.fillRect(0, 0, w, h);
-    g.globalAlpha = 0.55;
-    for (const [c, o, s] of [
-      ['#c9d4dc', 0, 18],
-      ['#1f3344', 64, 40],
-      ['#d98c3a', 150, 8],
-    ]) {
-      g.fillStyle = c;
-      g.fillRect(o, 0, s, h);
-      g.fillRect(0, o, w, s);
-    }
-  }, [2, 2]);
-
 const fabricTexture = () =>
   canvasTexture(128, 128, (g, w, h) => {
     const r = rand(3);
@@ -315,16 +283,12 @@ export function createMaterials() {
     amber: new THREE.MeshStandardMaterial({ color: 0xf0a020, roughness: 0.2, emissive: 0x6a3d00, emissiveIntensity: 0.5 }),
     tire: new THREE.MeshStandardMaterial({ color: 0x17181a, roughness: 0.92 }),
     fabric: new THREE.MeshStandardMaterial({ color: 0xffffff, map: fabricTexture(), roughness: 0.95 }),
-    wood: new THREE.MeshStandardMaterial({ color: 0xffffff, map: woodTexture(), roughness: 0.7, side: DS }),
-    felt: new THREE.MeshStandardMaterial({ color: 0x6c7076, roughness: 1, side: DS }),
-    mattress: new THREE.MeshStandardMaterial({ color: 0xe6e2da, roughness: 0.95 }),
-    pillow: new THREE.MeshStandardMaterial({ color: 0xf5f2ec, roughness: 0.95 }),
-    blanket: new THREE.MeshStandardMaterial({ color: 0xffffff, map: plaidTexture(), roughness: 0.98 }),
     led: new THREE.MeshStandardMaterial({ color: 0xfff3da, emissive: 0xffd9a0, emissiveIntensity: 2.2 }),
     screen: new THREE.MeshStandardMaterial({ color: 0x0b0f14, emissive: 0x2a6fa8, emissiveIntensity: 0.55, roughness: 0.2 }),
     gauge: new THREE.MeshStandardMaterial({ color: 0x0d0e10, emissive: 0xffffff, emissiveIntensity: 0.02, roughness: 0.3 }),
     plate: new THREE.MeshStandardMaterial({ color: 0xf6f6f2, roughness: 0.5 }),
     rubber: new THREE.MeshStandardMaterial({ color: 0x101112, roughness: 0.9, side: DS }),
+    paintInner: new THREE.MeshStandardMaterial({ color: 0xe9eae7, roughness: 0.55, side: DS }), // изнанка кузова
     bulkhead: new THREE.MeshStandardMaterial({ color: 0x9b9fa4, roughness: 1, side: DS }), // серый войлок
     fabricLight: new THREE.MeshStandardMaterial({ color: 0x7d8085, roughness: 1 }),
     steelBlack: new THREE.MeshStandardMaterial({ color: 0x1c1d20, metalness: 0.55, roughness: 0.45 }),
@@ -401,8 +365,13 @@ export function buildCar(M) {
     emboss(side, 0.3, hasSlide ? X_SL - 0.08 : X_B2 - 0.1, 1.1, 1.64);
     // молдинг: слева продолжается на боковину, справа — только на дверях
     if (!hasSlide) mesh(sideGeo({ side, x0: 1.55, x1: X_B2 - 0.01, y0: 0.66, y1: 0.74, off: 0.008, nu: 12, nv: 1 }), M.plastic);
-    // обшивка грузового отсека изнутри (фанера)
-    mesh(sideGeo({ side, x0: 0.06, x1: hasSlide ? X_SL : 2.46, y0: 0.5, y1: (x) => shoulder(x) - 0.02, off: -0.035, nu: 24, nv: 10 }), M.wood, interior);
+    // грузовой отсек без обшивки: внутренняя панель боковины из окрашенного металла
+    mesh(sideGeo({ side, x0: 0.06, x1: hasSlide ? X_SL : 2.46, y0: 0.5, y1: (x) => shoulder(x) - 0.02, off: -0.035, nu: 24, nv: 10 }), M.paintInner, interior);
+    // стойки-усилители каркаса и крючки для крепления груза
+    for (const x of [0.55, 1.2]) {
+      if (hasSlide && x > X_SL - 0.1) continue;
+      mesh(sideGeo({ side, x0: x - 0.04, x1: x + 0.04, y0: 0.72, y1: (xx) => shoulder(xx) - 0.03, off: -0.06, nu: 2, nv: 6 }), M.paintInner, interior);
+    }
     mesh(sideGeo({ side, x0: X_B2, x1: X_B, y0: 0.5, off: -0.035, nu: 2, nv: 8 }), M.trim, interior);
     if (hasSlide) {
       // закрытая направляющая сдвижной двери на задней боковине
@@ -434,7 +403,7 @@ export function buildCar(M) {
 
   // ----- крыша, лобовое стекло, капот
   mesh(topGeo({ x0: 0, x1: 3.14, nu: 30, nv: 30 }), M.paint, roof);
-  mesh(topGeo({ x0: 0.06, x1: 2.55, off: -0.03, s0: -0.93, s1: 0.93, nu: 10, nv: 20 }), M.wood, roof);
+  mesh(topGeo({ x0: 0.06, x1: 2.46, off: -0.03, s0: -0.93, s1: 0.93, nu: 10, nv: 20 }), M.paintInner, roof);
   mesh(topGeo({ x0: 2.55, x1: 3.12, off: -0.03, s0: -0.93, s1: 0.93, nu: 6, nv: 20 }), M.headliner, roof);
   mesh(topGeo({ x0: 3.14, x1: 3.95, s0: -0.9, s1: 0.9, nu: 20, nv: 24 }), M.glass, body, false);
   mesh(topGeo({ x0: 3.12, x1: 3.97, s0: -1, s1: -0.9, nu: 20, nv: 4 }), M.plastic);
@@ -448,15 +417,6 @@ export function buildCar(M) {
     ant.position.set(2.92, p.y + 0.18, 0);
     ant.rotation.z = 0.5;
     box(0.06, 0.03, 0.04, 0.01, M.plastic, 3.0, p.y + 0.01, 0, roof);
-  }
-  // вентилятор-люк спального модуля
-  {
-    const p = topPoint(1.15, 0, 0, new THREE.Vector3());
-    box(0.42, 0.05, 0.42, 0.02, M.plastic, 1.15, p.y + 0.02, 0, roof);
-    const dome = mesh(new THREE.SphereGeometry(0.2, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), M.glass, roof, false);
-    dome.scale.y = 0.35;
-    dome.position.set(1.15, p.y + 0.045, 0);
-    box(0.4, 0.02, 0.4, 0.005, M.plastic, 1.15, p.y - 0.05, 0, roof);
   }
 
   // капот — открывается
@@ -593,10 +553,17 @@ export function buildCar(M) {
   }
 
   // ----- пол, перегородки, колёсные ниши внутри
-  box(2.52, 0.04, 1.62, 0, M.felt, 0.05 + 2.52 / 2, 0.48, 0, interior);
+  // пол грузового отсека: чёрное резиновое покрытие с рифлением и проушины крепления груза
+  box(2.42, 0.04, 1.62, 0, M.rubber, 0.05 + 2.42 / 2, 0.48, 0, interior);
+  for (let i = 0; i < 22; i++) box(0.012, 0.006, 1.5, 0, M.plastic, 0.12 + i * 0.105, 0.503, 0, interior);
+  for (const x of [0.2, 2.3]) for (const z of [-0.62, 0.62]) {
+    const ring = mesh(new THREE.TorusGeometry(0.03, 0.006, 6, 16), M.steel, interior);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.set(x, 0.51, z);
+  }
   box(1.35, 0.04, 1.62, 0, M.rubber, 2.57 + 1.35 / 2, 0.4, 0, interior);
   for (const side of [-1, 1]) {
-    box(0.82, 0.26, 0.2, 0.04, M.felt, DIM.rearAxle, 0.62, side * 0.72, interior);
+    box(0.82, 0.26, 0.2, 0.04, M.paintInner, DIM.rearAxle, 0.62, side * 0.72, interior);
   }
   // перегородка «кабина / грузовой отсек» с окном, как у серийного Doblò Cargo
   {
@@ -731,7 +698,7 @@ export function buildCar(M) {
     // грузовой фургон: сдвижная дверь глухая, без окна
     mesh(sideGeo({ side, x0, x1, y0: Y_SILL, y1: top, nu: 24, nv: 16 }), M.paint, g);
     emboss(side, x0 + 0.1, x1 - 0.1, 1.1, 1.64, g);
-    mesh(sideGeo({ side, x0: x0 + 0.02, x1: x1 - 0.02, y0: Y_SILL + 0.03, y1: (x) => top(x) - 0.03, off: -0.05, nu: 20, nv: 10 }), M.wood, g);
+    mesh(sideGeo({ side, x0: x0 + 0.02, x1: x1 - 0.02, y0: Y_SILL + 0.03, y1: (x) => top(x) - 0.03, off: -0.05, nu: 20, nv: 10 }), M.paintInner, g);
     mesh(sideGeo({ side, x0: x0 + 0.01, x1: x1 - 0.01, y0: 0.66, y1: 0.74, off: 0.008, nu: 20, nv: 1 }), M.plastic, g);
     box(0.035, 0.14, 0.03, 0.012, M.plastic, x1 - 0.06, 0.98, side * (HW + 0.012), g);
     box(0.03, 0.18, 0.04, 0.012, M.plastic, x1 - 0.06, 1.0, side * (HW - 0.07), g);
@@ -788,7 +755,7 @@ export function buildCar(M) {
     panel.position.x = depth;
     // обшивка изнутри
     const trimShape = roundedRectShape(za + 0.05, y0 + 0.05, zb - 0.05, y1 - 0.06, 0.03);
-    mesh(capGeo(trimShape, depth + 0.012), M.wood, g);
+    mesh(capGeo(trimShape, depth + 0.012), M.paintInner, g);
     // ручка, номер
     // чёрная накладка поперёк дверей: на левой — номер и ручка, на правой — эмблема
     if (side < 0) {
@@ -966,71 +933,11 @@ export function buildCar(M) {
     box(0.12, 0.02, 0.2, 0.01, M.led, 3.05, 1.8, 0, roof);
   }
 
-  // ---------------------------------------------------------------- спальный модуль
-  const sleeper = new THREE.Group();
-  interior.add(sleeper);
-  {
-    const bx0 = 0.08;
-    const bx1 = 2.02;
-    const L = bx1 - bx0;
-    const cx = (bx0 + bx1) / 2;
-    const top = 0.8;
-    // каркас и столешница кровати
-    box(L, 0.022, 1.46, 0.004, M.wood, cx, top, 0, sleeper);
-    for (const z of [-0.72, 0.72]) box(L, 0.3, 0.018, 0.003, M.wood, cx, 0.65, z, sleeper);
-    box(0.018, 0.3, 1.44, 0.003, M.wood, bx1, 0.65, 0, sleeper);
-    // выдвижные ящики со стороны задних дверей
-    const drawers = [];
-    for (const [z, w] of [[-0.38, 0.62], [0.38, 0.62]]) {
-      const d = new THREE.Group();
-      d.position.set(bx0, 0, z);
-      sleeper.add(d);
-      box(0.02, 0.26, w, 0.004, M.wood, 0, 0.65, 0, d);
-      box(0.55, 0.018, w - 0.04, 0.003, M.wood, 0.28, 0.53, 0, d);
-      box(0.5, 0.2, 0.012, 0.002, M.wood, 0.28, 0.63, (w / 2 - 0.02), d);
-      box(0.5, 0.2, 0.012, 0.002, M.wood, 0.28, 0.63, -(w / 2 - 0.02), d);
-      box(0.025, 0.03, 0.16, 0.012, M.plastic, -0.02, 0.7, 0, d);
-      // содержимое ящика
-      box(0.22, 0.12, 0.2, 0.02, M.amber, 0.2, 0.6, 0.12, d).material = M.plasticMid;
-      box(0.18, 0.1, 0.16, 0.03, M.blanket, 0.38, 0.59, -0.12, d);
-      drawers.push(d);
-    }
-    // матрас
-    box(L - 0.02, 0.12, 1.42, 0.05, M.mattress, cx, top + 0.07, 0, sleeper);
-    // подушки у кабины
-    for (const z of [-0.34, 0.34]) {
-      const p = box(0.36, 0.1, 0.56, 0.05, M.pillow, bx1 - 0.25, top + 0.18, z, sleeper);
-      p.rotation.z = -0.12;
-    }
-    // плед
-    const bl = box(1.15, 0.035, 1.46, 0.015, M.blanket, bx0 + 0.62, top + 0.145, 0, sleeper);
-    void bl;
-    const fold = box(0.14, 0.05, 1.46, 0.022, M.blanket, bx0 + 1.2, top + 0.15, 0, sleeper);
-    void fold;
-    // светодиодные ленты и точечный свет
-    for (const side of [-1, 1]) {
-      const p = topPoint(1.2, side * 0.86, -0.045, new THREE.Vector3());
-      box(2.1, 0.012, 0.025, 0.004, M.led, 1.2, p.y, p.z, roof);
-    }
-    // полка с книгами на левой стенке
-    box(0.7, 0.015, 0.14, 0.004, M.wood, 0.8, 1.35, -0.74, sleeper);
-    const books = [0x3b5f7a, 0x8c4a2f, 0xd4b26a, 0x4f6b4a, 0x6c4f7a];
-    books.forEach((c, i) => {
-      const m = new THREE.MeshStandardMaterial({ color: c, roughness: 0.8 });
-      box(0.03, 0.18 + (i % 2) * 0.03, 0.11, 0.004, m, 0.55 + i * 0.04, 1.45 + (i % 2) * 0.015, -0.74, sleeper);
-    });
-    // термос-кружка и фонарик на полке
-    const mug = mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.12, 20), M.steel, sleeper);
-    mug.position.set(0.95, 1.42, -0.74);
-    // сетка-органайзер на правой стенке
-    box(0.6, 0.35, 0.01, 0.005, M.plastic, 0.9, 1.25, 0.77, sleeper).material = new THREE.MeshStandardMaterial({
-      color: 0x2c3036, roughness: 1, transparent: true, opacity: 0.75,
-    });
-    sleeper.userData.drawers = drawers;
-  }
+  // плафон грузового отсека
+  box(0.16, 0.025, 0.08, 0.01, M.led, 1.3, topPoint(1.3, 0, -0.035, new THREE.Vector3()).y - 0.01, 0, roof);
 
   // Светильники салона: без теней, чтобы внутри было видно и при закрытой машине.
-  const cabinLight = new THREE.PointLight(0xffe2b8, 1.2, 3.2, 1.6);
+  const cabinLight = new THREE.PointLight(0xfff4e2, 1.0, 3.2, 1.6);
   cabinLight.position.set(1.1, 1.55, 0);
   interior.add(cabinLight);
   const cabinLight2 = new THREE.PointLight(0xfff0dc, 0.7, 2.4, 1.6);
