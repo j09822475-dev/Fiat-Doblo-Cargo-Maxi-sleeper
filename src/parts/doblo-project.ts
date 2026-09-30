@@ -31,6 +31,7 @@ const ASSEMBLIES: Assembly[] = [
   { id: 'closures', title: 'Навесные детали', parent: 'body' },
   { id: 'door-fl', title: 'Дверь передняя левая', parent: 'closures' },
   { id: 'door-fr', title: 'Дверь передняя правая', parent: 'closures' },
+  { id: 'slide-l', title: 'Дверь сдвижная левая', parent: 'closures' },
   { id: 'slide-r', title: 'Дверь сдвижная правая', parent: 'closures' },
   { id: 'rear-doors', title: 'Задние створки', parent: 'closures' },
   { id: 'hood-asm', title: 'Капот', parent: 'closures' },
@@ -46,18 +47,21 @@ const ASSEMBLIES: Assembly[] = [
 const gapNom = (id: string) => gaps.items.find((g) => g.id === id)!.gap.nom;
 
 export function createDobloProject(): Project {
+  // Паспортные данные Doblò Cargo Maxi (2015, техническая спецификация Fiat Professional):
+  // габарит 4756 мм, база 3105 мм, свесы 911 / 740 мм. Здесь length и frontOverhang — по кузову
+  // без бамперов (передний бампер выступает на ~23 мм, задний — на 85 мм: по чертежу он образует ступеньку под створками).
   const vehicle = {
-    length: 4740,
+    length: 4648,
     width: 1832,
     height: 1845,
     wheelbase: 3105,
-    frontOverhang: 930,
+    frontOverhang: 888,
     trackFront: 1510,
     trackRear: 1530,
     tireRadius: 320,
     tireWidth: 195,
     archRadius: 400,
-    bodyBottom: 340,
+    bodyBottom: 275,
   };
   const hp = { ...DEFAULT_HARDPOINTS };
   const f = new BodyForm(vehicle, hp);
@@ -98,7 +102,7 @@ export function createDobloProject(): Project {
   const doorGap = gapNom('door-body');
   for (const [k, s, t] of LR) {
     const hingeY = s * (f.halfWidth(hp.xDoorFront, 800) + 25);
-    add(`door-f${k}`, `Дверь передняя ${t}`, 'closures', `door-f${k}`, 'frontDoor', { side: s, gap: doorGap, depth: 100, frontBevel: 0.9, archGap: 40 }, 'DC04', 0.75, {
+    add(`door-f${k}`, `Дверь передняя ${t}`, 'closures', `door-f${k}`, 'frontDoor', { side: s, gap: doorGap, depth: 100, frontBevel: 0.9, archGap: 0 }, 'DC04', 0.75, {
       type: 'hinge', origin: [hp.xDoorFront + doorGap + 20, hingeY, 0], axis: [0, 0, s], min: 0, max: 70, open: 65,
     });
     add(`glass-f${k}`, `Стекло двери передней ${t === 'левая' ? 'левой' : 'правой'}`, 'glazing', `door-f${k}`, 'frontDoorGlass', { side: s, gap: doorGap }, 'GLASS', 4, { type: 'mounted', to: `door-f${k}` });
@@ -106,17 +110,23 @@ export function createDobloProject(): Project {
     add(`moulding-f${k}`, `Молдинг двери ${t === 'левая' ? 'левой' : 'правой'}`, 'trim', `door-f${k}`, 'moulding', { side: s, gap: doorGap }, 'PP-EPDM', 2.5, { type: 'mounted', to: `door-f${k}` });
     add(`door-seal-${k}`, `Уплотнитель проёма двери ${t === 'левая' ? 'левой' : 'правой'} (стойка B)`, 'seals', `side-${k}`, 'doorSeal', { side: s }, 'RUBBER', 2);
   }
-  add('slide-r', 'Дверь сдвижная правая', 'closures', 'slide-r', 'slideDoor', { side: 1, gap: gapNom('slide-body'), depth: 70 }, 'DC04', 0.75, {
-    type: 'slide', out: [0, 85, 0], travel: [980, 0, 0], outShare: 0.18,
-  });
+  // сдвижные двери с обеих сторон — как на чертеже Doblò 2015 Cargo LWB
+  for (const [k, s, t] of LR) {
+    add(`slide-${k}`, `Дверь сдвижная ${t}`, 'closures', `slide-${k}`, 'slideDoor', { side: s, gap: gapNom('slide-body'), depth: 70 }, 'DC04', 0.75, {
+      type: 'slide', out: [0, s * 85, 0], travel: [980, 0, 0], outShare: 0.18,
+    });
+    add(`moulding-s${k}`, `Молдинг сдвижной двери ${t === 'левая' ? 'левой' : 'правой'}`, 'trim', `slide-${k}`, 'moulding', { side: s, gap: gapNom('slide-body'), slide: 1, end: 2280 }, 'PP-EPDM', 2.5, { type: 'mounted', to: `slide-${k}` });
+  }
   const rg = gapNom('rear-doors');
   for (const [k, s, t] of LR) {
     add(`rear-door-${k}`, `Створка задняя ${t}`, 'closures', 'rear-doors', 'rearDoor', { side: s, gap: rg, gapCenter: rg, split: 110, depth: 60 }, 'DC04', 0.75, {
       type: 'hinge', origin: [f.xRear + 20, s * (f.rearEdge(1000) + 12), 0], axis: [0, 0, s], min: 0, max: 180, open: 90,
     });
   }
+  // ось петель капота — на уровне его поверхности: при открывании задняя кромка
+  // поднимается и почти не уходит назад, к стойкам и стеклу
   add('hood', 'Капот', 'closures', 'hood-asm', 'hood', { gap: gapNom('hood-fender'), depth: 45, flange: 1.5 }, 'DC04', 0.7, {
-    type: 'hinge', origin: [hp.xCowl - 40, 0, f.topLine(hp.xCowl - 40) - 15], axis: [0, 1, 0], min: 0, max: 55, open: 50,
+    type: 'hinge', origin: [hp.xCowl - 40, 0, f.topLine(hp.xCowl - 40) + 25], axis: [0, 1, 0], min: 0, max: 55, open: 50,
   });
 
   // ---- остекление, светотехника, облицовка
@@ -124,13 +134,13 @@ export function createDobloProject(): Project {
   for (const [k, s, t] of LRm) {
     add(`headlamp-${k}`, `Фара ${t === 'левый' ? 'левая' : 'правая'}`, 'lighting', 'lighting', 'headlamp', { side: s, gap: 3, depth: 60 }, 'PC', 2.5, { type: 'fixed' }, 'headlamp');
     add(`tail-${k}`, `Фонарь задний ${t}`, 'lighting', 'lighting', 'tailLamp', { side: s, gap: 3, depth: 40 }, 'PC', 2.5, { type: 'fixed' }, 'tailLamp');
-    add(`fog-${k}`, `Фара противотуманная ${t === 'левый' ? 'левая' : 'правая'}`, 'lighting', 'lighting', 'fogLamp', { side: s }, 'PC', 2.5, { type: 'fixed' }, 'fogFront');
-    add(`liner-front-${k}`, `Подкрылок передний ${t}`, 'trim', 'bumpers', 'wheelLinerFront', { side: s, radius: 430, inner: 430 }, 'PP-EPDM', 2.5);
+    add(`fog-${k}`, `Фара противотуманная ${t === 'левый' ? 'левая' : 'правая'}`, 'lighting', 'lighting', 'fogLamp', { side: s, y: 720, z: 440 }, 'PC', 2.5, { type: 'fixed' }, 'fogFront');
+    add(`liner-front-${k}`, `Подкрылок передний ${t}`, 'trim', 'bumpers', 'wheelLinerFront', { side: s, radius: 410, inner: 430 }, 'PP-EPDM', 2.5);
   }
   add('chmsl', 'Стоп-сигнал дополнительный', 'lighting', 'lighting', 'chmsl', {}, 'PC', 2.5, { type: 'fixed' }, 'chmsl');
   add('grille', 'Решётка радиатора', 'trim', 'bumpers', 'grille', { gap: 3, gapBumper: 1.5, depth: 40 }, 'PP-EPDM', 2.5);
   add('bumper-front', 'Бампер передний', 'trim', 'bumpers', 'bumperFront', { gapLamp: 2.0, depth: 50 }, 'PP-EPDM', 3);
-  add('bumper-rear', 'Бампер задний', 'trim', 'bumpers', 'bumperRear', {}, 'PP-EPDM', 3);
+  add('bumper-rear', 'Бампер задний', 'trim', 'bumpers', 'bumperRear', { protrusion: 85 }, 'PP-EPDM', 3);
   add('plate-front', 'Площадка переднего номера', 'trim', 'bumpers', 'plateFront', {}, 'PP-EPDM', 2.5);
   add('plate-rear', 'Место заднего номерного знака', 'trim', 'rear-doors', 'plateRear', {}, 'PP-EPDM', 2.5, { type: 'mounted', to: 'rear-door-l' }, 'plateRear');
 
@@ -151,7 +161,7 @@ export function createDobloProject(): Project {
   for (const [k, s, t] of LRn) {
     add(`seat-${k}`, `Сиденье ${t} (крайнее заднее положение)`, 'interior', 'interior', 'seat', { side: s, x: 1020, recline: 0.2 }, 'ENVELOPE', 0);
   }
-  add('bulkhead', 'Перегородка кабины', 'interior', 'interior', 'bulkhead', { x: 1500 }, 'DC03', 1.5);
+  add('bulkhead', 'Перегородка кабины', 'interior', 'interior', 'bulkhead', { x: 1545 }, 'DC03', 1.5);
 
   // ---- конструктивные соединения (сварка, болты, клей): коллизии между ними не ищутся
   const joined: [string, string][] = [];
@@ -172,6 +182,7 @@ export function createDobloProject(): Project {
     j(`sill-${k}`, 'floor-cargo');
     j(`b-pillar-${k}`, 'bulkhead');
     j(`b-pillar-${k}`, `sill-${k}`);
+    j(`b-pillar-${k}`, 'floor-cargo');
     j(`b-pillar-${k}`, `door-seal-${k}`);
     j(`wheelhouse-rear-${k}`, 'floor-cargo');
     j(`front-rail-${k}`, 'firewall');
@@ -225,11 +236,11 @@ export function createDobloProject(): Project {
     gap(`tail-${k}`, 'rear-frame', 'lamp-body');
     gap(`rear-door-${k}`, 'rear-frame', 'rear-doors');
   }
-  gap('slide-r', 'side-outer-r', 'slide-body');
+  for (const k of ['l', 'r']) gap(`slide-${k}`, `side-outer-${k}`, 'slide-body');
   gap('rear-door-l', 'rear-door-r', 'rear-doors');
   rules.push({ id: `c${++n}`, kind: 'clearance', a: 'engine', b: 'hood', norm: 'engine-hood' });
   for (const k of ['l', 'r']) rules.push({ id: `c${++n}`, kind: 'clearance', a: `seat-${k}`, b: 'bulkhead', norm: 'seat-bulkhead' });
-  for (const id of ['door-fl', 'door-fr', 'slide-r', 'rear-door-l', 'rear-door-r', 'hood']) {
+  for (const id of ['door-fl', 'door-fr', 'slide-l', 'slide-r', 'rear-door-l', 'rear-door-r', 'hood']) {
     rules.push({ id: `m${++n}`, kind: 'motion', part: id, norm: 'moving-panel' });
   }
   for (const id of ['wheel-fl', 'wheel-fr', 'wheel-rl', 'wheel-rr']) {

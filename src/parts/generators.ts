@@ -157,12 +157,13 @@ const doorTopGap = (f: BodyForm, g: number) => (x: number) => {
 
 const G: Record<string, Gen> = {
   // Наружная боковина: всё, что не занято проёмами дверей, фарами и фонарями
-  sideOuter(c, p) {
+  sideOuter(c, p, _part, project) {
     const { f } = c;
     const h = f.h;
     const s = p.side;
     const t = 0.8;
-    const slide = s > 0; // сдвижная дверь только справа
+    // проём сдвижной двери — только с той стороны, где она есть в проекте
+    const slide = project.parts.some((q) => q.generator === 'slideDoor' && q.params.side === s);
     const dt = doorTop(f);
     const low = (x: number) => (x > f.xRear - 360 ? h.zRearSill + 1 : f.v.bodyBottom);
     const lampX = f.xRear - 110;
@@ -170,14 +171,13 @@ const G: Record<string, Gen> = {
     side(c, s, h.xCowl, h.xDoorFront, f.shoulder(h.xCowl), (x) => f.shoulder(x), t, { nu: 10, nv: 6 });
     // рельс над дверями
     side(c, s, h.xDoorFront, f.xRear, dt, (x) => f.shoulder(x), t, { nu: 60, nv: 2 });
-    // порог под проёмами
-    side(c, s, h.xDoorFront, h.xDoorRear, low, h.zSill, t, { nu: 20, nv: 2 });
+    // двери закрывают боковину до нижней кромки кузова, порог — за ними
     if (slide) {
-      side(c, s, h.xDoorRear, h.xSlideFront, low, dt, t, { nu: 3, nv: 16 });
-      side(c, s, h.xSlideFront, h.xSlideRear, low, h.zSill, t, { nu: 16, nv: 2 });
-      side(c, s, h.xSlideRear, lampX - 3, low, dt, t, { nu: 30, nv: 16 });
+      // мелкий шаг по высоте: внизу боковина подворачивается, крупные грани дали бы ложный перепад у дверей
+      side(c, s, h.xDoorRear, h.xSlideFront, low, dt, t, { nu: 3, nv: 48 });
+      side(c, s, h.xSlideRear, lampX - 3, low, dt, t, { nu: 30, nv: 48 });
     } else {
-      side(c, s, h.xDoorRear, lampX - 3, low, dt, t, { nu: 50, nv: 16 });
+      side(c, s, h.xDoorRear, lampX - 3, low, dt, t, { nu: 50, nv: 48 });
     }
     // угол у заднего фонаря: ниже и выше фонаря
     side(c, s, lampX - 3, f.xRear, low, 897, t, { nu: 6, nv: 8 });
@@ -198,6 +198,8 @@ const G: Record<string, Gen> = {
     // спереди крыло начинается за фарой, снизу — над бампером и аркой, сверху — до капота
     const zTop = (x: number) => (x < h.xCowl ? f.shoulder(x) : f.shoulder(h.xCowl));
     const zLow = (x: number) => (x <= -390 ? bumperSideTop(f, x) + p.gapBumper : f.v.bodyBottom);
+    // под фарой: клин между фарой и косой верхней кромкой бампера
+    side(c, s, h.xNoseSeam, f.xLampEnd + p.gapLamp, zLow, (x) => f.lampBottom(x) - p.gapLamp, 0.8, { nu: 30, nv: 8 });
     // отдельный участок у бампера, чтобы вертикальная кромка у арки легла точно в узлы сетки
     side(c, s, f.xLampEnd + p.gapLamp, -390, zLow, zTop, 0.8, { nu: 30, nv: 14 });
     side(c, s, -390, h.xDoorFront, f.v.bodyBottom, zTop, 0.8, { nu: 60, nv: 14 });
@@ -207,19 +209,14 @@ const G: Record<string, Gen> = {
     const { f } = c;
     const h = f.h;
     const g = p.gap;
-    // кромка капота у фары идёт по диагонали: зазор откладываем поперёк шва, а не вдоль сечения
-    const edge = (x: number) => {
-      const L = f.topHalfArc(x);
-      const slope = ((f.lampS(x + 5) - f.lampS(x - 5)) / 10) * L;
-      return f.lampS(x) - (g * Math.sqrt(1 + slope * slope)) / L;
-    };
+    const edge = hoodEdge(f, g);
     // у кромок — отбортовка толщиной p.flange, к середине капот набирает полную глубину
     const flange = p.flange;
     const d = (x: number, s: number) =>
       Math.min(p.depth, flange + 0.3 * Math.min(x - h.xNoseSeam, h.xCowl - g - x, (edge(x) - Math.abs(s)) * f.topHalfArc(x)));
     top(c, h.xNoseSeam, h.xCowl - g, (x) => -edge(x), edge, d, 0, 40, 96);
     // передняя кромка капота над решёткой, между фарами
-    front(c, -h.yLampInner + g, h.yLampInner - g, 900 + g, (y) => f.sectionTop(h.xNoseSeam, y) - 1, flange, 0, 16, 4);
+    front(c, -h.yLampInner + g, h.yLampInner - g, h.zGrilleTop + g, (y) => f.sectionTop(h.xNoseSeam, y) - 1, flange, 0, 16, 4);
   },
 
   frontDoor(c, p) {
@@ -232,10 +229,11 @@ const G: Record<string, Gen> = {
     const zt = doorTopGap(f, g);
     // клиновидная передняя кромка: даёт место для поворота вокруг петель
     const wedge = (x: number) => Math.min(p.depth, 12 + (x - x0) * p.frontBevel, 12 + (x1 - x) * 1.5);
-    side(c, s, x0, x1, h.zSill + g, h.zBelt, (x) => wedge(x), { nu: 90, nv: 10, arch: p.archGap });
+    const belt = (x: number) => f.belt(x);
+    side(c, s, x0, x1, h.zDoorBottom, belt, (x, z) => Math.min(wedge(x), sillRoom(f, x, z)), { nu: 90, nv: 14, arch: p.archGap });
     const fw = Math.min(30, p.depth);
-    side(c, s, x0, x0 + 60, h.zBelt, zt, (x) => Math.min(fw, wedge(x)), { nu: 4, nv: 10 });
-    side(c, s, x1 - 70, x1, h.zBelt, zt, fw, { nu: 4, nv: 10 });
+    side(c, s, x0, x0 + 60, belt, zt, (x) => Math.min(fw, wedge(x)), { nu: 4, nv: 10 });
+    side(c, s, x1 - 70, x1, belt, zt, fw, { nu: 4, nv: 10 });
     side(c, s, x0 + 60, x1 - 70, (x) => zt(x) - 40, zt, fw, { nu: 24, nv: 2 });
   },
 
@@ -245,14 +243,14 @@ const G: Record<string, Gen> = {
     const g = p.gap;
     const top = doorTopGap(f, g);
     const zt = (x: number) => top(x) - 40;
-    side(c, p.side, h.xDoorFront + g + 60, h.xDoorRear - g - 70, h.zBelt, zt, 4, { off: -12, nu: 20, nv: 8 });
+    side(c, p.side, h.xDoorFront + g + 60, h.xDoorRear - g - 70, (x) => f.belt(x), zt, 4, { off: -12, nu: 20, nv: 8 });
   },
 
   slideDoor(c, p) {
     const { f } = c;
     const h = f.h;
     const g = p.gap;
-    side(c, p.side, h.xSlideFront + g, h.xSlideRear - g, h.zSill + g, doorTopGap(f, g), p.depth, { nu: 28, nv: 18 });
+    side(c, p.side, h.xSlideFront + g, h.xSlideRear - g, h.zDoorBottom, doorTopGap(f, g), (x, z) => Math.min(p.depth, sillRoom(f, x, z)), { nu: 28, nv: 22 });
   },
 
   rearDoor(c, p) {
@@ -300,9 +298,9 @@ const G: Record<string, Gen> = {
     // лицевая часть на носу: сверху уходит под кромку капота (зазор g + отбортовка капота),
     // у угла продолжается на скругление крыла
     const yS = Math.abs(f.top(h.xNoseSeam, f.lampS(h.xNoseSeam))[1]);
-    const yEdge = f.frontHalf(900);
+    const yEdge = f.frontHalf(h.zGrilleTop);
     // под кромкой капота фара ниже на зазор g; за границей капота выходит на скругление
-    const zUnder = (y: number) => f.sectionTop(h.xNoseSeam, y) - g;
+    const zUnder = (y: number) => f.sectionTop(h.xNoseSeam, y) - g - 0.5;
     const zOpen = (y: number) => f.sectionTop(h.xNoseSeam, y);
     // корпус фары уходит вглубь, но у верхней кромки и у угла носа — тонкий край
     const dF = (zt: F) => (y: number, z: number) => Math.min(p.depth, 2 + (zt(y) - z) * 1.2, 2 + (yEdge - Math.abs(y)) * 1.0);
@@ -323,7 +321,7 @@ const G: Record<string, Gen> = {
     const { f } = c;
     const h = f.h;
     const bt = bumperFrontTop(f, 1.5);
-    front(c, -h.yLampInner + p.gap, h.yLampInner - p.gap, (y) => bt(y) + p.gapBumper, 900, p.depth, 0, 80, 4);
+    front(c, -h.yLampInner + p.gap, h.yLampInner - p.gap, (y) => bt(y) + p.gapBumper, h.zGrilleTop, p.depth, 0, 80, 4);
   },
 
   bumperFront(c, p) {
@@ -342,12 +340,13 @@ const G: Record<string, Gen> = {
     }
   },
 
-  bumperRear(c) {
+  bumperRear(c, p) {
     const { f } = c;
     const w = f.halfWidth(f.xRear, 400) + 20;
+    const x1 = f.xRear + p.protrusion;
     box8(c.mb, [
-      [f.xRear - 190, -w + 40, 265], [f.xRear + 35, -w + 40, 265], [f.xRear + 35, w - 40, 265], [f.xRear - 190, w - 40, 265],
-      [f.xRear - 190, -w, 468], [f.xRear + 35, -w, 468], [f.xRear + 35, w, 468], [f.xRear - 190, w, 468],
+      [f.xRear - 190, -w + 40, 265], [x1, -w + 40, 265], [x1, w - 40, 265], [f.xRear - 190, w - 40, 265],
+      [f.xRear - 190, -w, 468], [x1, -w, 468], [x1, w, 468], [f.xRear - 190, w, 468],
     ]);
   },
 
@@ -368,7 +367,7 @@ const G: Record<string, Gen> = {
   },
 
   fogLamp(c, p) {
-    const pt = c.f.front(p.side * 610, 370);
+    const pt = c.f.front(p.side * p.y, p.z);
     cylinder(c.mb, [pt[0] + 40, pt[1], pt[2]], [pt[0] - 6, pt[1], pt[2]], 38);
   },
 
@@ -385,26 +384,31 @@ const G: Record<string, Gen> = {
   mirror(c, p) {
     const { f } = c;
     const s = p.side;
+    // по чертежу зеркало стоит в переднем углу окна двери, низ — чуть выше линии остекления
     const x = f.h.xDoorFront;
+    const zb = f.belt(x + 95);
     const y0 = f.halfWidth(x, 1200) + 30;
-    const lo: P = [x + 40, s > 0 ? y0 : -(y0 + 190), 1080];
-    const hi: P = [x + 150, s > 0 ? y0 + 190 : -y0, 1330];
+    const lo: P = [x + 40, s > 0 ? y0 : -(y0 + 190), zb + 15];
+    const hi: P = [x + 150, s > 0 ? y0 + 190 : -y0, zb + 215];
     aabb(c.mb, lo, hi);
-    beam(c.mb, [x + 95, s * (y0 - 25), 1130], [x + 95, s * (y0 + 5), 1130], 40, 40, [1, 0, 0]);
+    beam(c.mb, [x + 95, s * (y0 - 25), zb + 30], [x + 95, s * (y0 + 5), zb + 30], 40, 40, [1, 0, 0]);
   },
 
   moulding(c, p) {
     const { f } = c;
     const h = f.h;
     const g = p.gap;
-    side(c, p.side, h.xDoorFront + g + 10, h.xDoorRear - g - 10, 470, 540, 10, { off: 10, nu: 20, nv: 2, arch: 30 });
+    // молдинг по чертежу: полоса 515…585 мм на передней и сдвижной дверях
+    const [x0, x1] = p.slide ? [h.xSlideFront + g + 10, p.end] : [h.xDoorFront + g + 150, h.xDoorRear - g - 10];
+    side(c, p.side, x0, x1, 515, 585, 10, { off: 10, nu: 20, nv: 2, arch: 30 });
   },
 
   // ---------- каркас кузова в белом
   sill(c, p) {
     const { f } = c;
     const s = p.side;
-    const y = s * (f.hw - 90);
+    // порог утоплен внутрь: снаружи его закрывают двери до нижней кромки кузова
+    const y = s * (f.hw - SILL_INSET);
     beam(c.mb, [470, y, 370], [2690, y, 370], 90, 80);
   },
 
@@ -442,17 +446,21 @@ const G: Record<string, Gen> = {
 
   // щит: внизу только между арками колёс, выше арок — во всю ширину
   firewall(c) {
-    aabb(c.mb, [58, -420, 402], [60, 420, 790]);
-    aabb(c.mb, [58, -760, 790], [60, 760, 1080]);
+    // щит под основанием лобового стекла, верх — с запасом под капотом
+    const x = c.f.h.xCowl - 180;
+    const zTop = Math.min(1080, c.f.topLine(x) - 70);
+    aabb(c.mb, [x - 2, -420, 402], [x, 420, 790]);
+    aabb(c.mb, [x - 2, -760, 790], [x, 760, zTop]);
   },
 
   radiatorSupport(c) {
-    aabb(c.mb, [-835, -640, 480], [-805, 640, 860]);
+    const x = c.f.h.xNoseSeam + 20;
+    aabb(c.mb, [x, -640, 480], [x + 30, 640, c.f.h.zGrilleTop - 30]);
   },
 
   frontRail(c, p) {
     const y = p.side * 380;
-    beam(c.mb, [-800, y, 470], [55, y, 420], 60, 90);
+    beam(c.mb, [c.f.h.xNoseSeam + 55, y, 470], [55, y, 420], 60, 90);
   },
 
   // арка заднего колеса: дуга над колесом и внутренняя стенка
@@ -500,13 +508,18 @@ const G: Record<string, Gen> = {
     ], 40);
   },
 
+  // габарит агрегата под капотом: верх идёт за профилем капота с запасом под норму 60 мм
   engine(c) {
-    aabb(c.mb, [-740, -300, 380], [40, 300, 930]);
+    const f = c.f;
+    const x0 = f.h.xNoseSeam + 80;
+    const zt = (x: number) => f.topLine(x) - 125;
+    prism(c, [[x0, 380], [40, 380], [40, zt(40)], [-300, zt(-300)], [x0, zt(x0)]], -300, 300);
   },
 
   // ---------- интерьер
   instrumentPanel(c) {
-    prism(c, [[140, 800], [330, 800], [470, 860], [560, 1000], [520, 1165], [330, 1190], [140, 1130]], -800, 800);
+    // передняя часть уходит под капот и основание стекла
+    prism(c, [[140, 800], [330, 800], [470, 860], [560, 1000], [520, 1165], [380, 1190], [240, 1110], [140, 1060]], -800, 800);
   },
 
   seat(c, p) {
@@ -543,8 +556,20 @@ const G: Record<string, Gen> = {
   bulkhead(c, p) {
     const { f } = c;
     const x = p.x;
-    const yMax = f.halfWidth(x, 1000) - 70;
-    patch(c, -yMax, yMax, 483, (y) => f.sectionTop(x, y) - 50, (y, z) => [x, y, z], 1.5, 24, 8);
+    const inset = 70;
+    const yMax = f.halfWidth(x, 1000) - inset;
+    // вверху боковины заваливаются внутрь — контур перегородки идёт за ними
+    const zSide = (y: number) => {
+      let lo = 1000;
+      let hi = f.topLine(x);
+      for (let i = 0; i < 30; i++) {
+        const m = (lo + hi) / 2;
+        if (f.halfWidth(x, m) - inset >= Math.abs(y)) lo = m;
+        else hi = m;
+      }
+      return lo;
+    };
+    patch(c, -yMax, yMax, 483, (y) => Math.min(f.sectionTop(x, y) - 50, zSide(y)), (y, z) => [x, y, z], 1.5, 48, 8);
   },
 
   doorSeal(c, p) {
@@ -555,12 +580,73 @@ const G: Record<string, Gen> = {
   },
 };
 
-/** Верх бампера на боковине: под фарой, за ней — вниз к передней кромке арки. */
+/** Верх бампера на боковине: у носа — под фарой, дальше по чертежу косо вниз к передней кромке арки. */
 function bumperSideTop(f: BodyForm, x: number, gap = 1.5) {
-  const xl = f.xLampEnd;
+  const xl = f.h.xNoseSeam;
   if (x < xl) return f.lampBottom(x) - gap;
   const k = Math.min(1, (x - xl) / (-390 - xl));
   return f.lampBottom(xl) - gap + (560 - (f.lampBottom(xl) - gap)) * k;
+}
+
+/**
+ * Кромка капота у фары (параметр s сечения): кромка фары идёт косо по скруглению крыла,
+ * поэтому точку кромки капота ищем так, чтобы расстояние в пространстве до кромки фары было ровно g.
+ */
+function hoodEdge(f: BodyForm, g: number) {
+  const h = f.h;
+  const cache = new Map<number, number>();
+  // граница, от которой откладывается зазор: кромка фары, за фарой — верхняя кромка крыла (s = 1),
+  // у шва носа — верх лицевой части фары
+  const border = (x: number) => f.top(x, f.lampS(x));
+  // у шва носа: верх лицевой части фары вместе с её толщиной (корпус уходит назад на ~2 мм)
+  const seamTop: P[] = [];
+  for (let k = 0; k <= 20; k++) seamTop.push(f.top(h.xNoseSeam, f.lampS(h.xNoseSeam) + ((1 - f.lampS(h.xNoseSeam)) * k) / 20));
+  const seamBack = seamTop.map((q): P => [q[0] + 2.5, q[1], q[2]]);
+  // расстояние от точки до ломаной (до отрезков, а не до вершин — иначе зазор выходит меньше заданного)
+  const toPolyline = (p: P, pts: P[]) => {
+    let best = Infinity;
+    for (let i = 1; i < pts.length; i++) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const ap = [p[0] - a[0], p[1] - a[1], p[2] - a[2]];
+      const l2 = ab[0] ** 2 + ab[1] ** 2 + ab[2] ** 2;
+      const t = l2 > 0 ? Math.min(1, Math.max(0, (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / l2)) : 0;
+      best = Math.min(best, Math.hypot(ap[0] - ab[0] * t, ap[1] - ab[1] * t, ap[2] - ab[2] * t));
+    }
+    return best;
+  };
+  const dist = (x: number, s: number) => {
+    const p = f.top(x, s);
+    const line: P[] = [];
+    for (let k = -12; k <= 12; k++) line.push(border(Math.min(h.xCowl, Math.max(h.xNoseSeam, x + k * 5))));
+    const d = toPolyline(p, line);
+    return x - h.xNoseSeam < 4 * g ? Math.min(d, toPolyline(p, seamTop), toPolyline(p, seamBack), toPolyline(p, [seamTop[0], seamBack[0]])) : d;
+  };
+  return (x: number) => {
+    const key = Math.round(x * 100);
+    const hit = cache.get(key);
+    if (hit !== undefined) return hit;
+    const s1 = f.lampS(x);
+    let lo = s1 - (4 * g) / f.topHalfArc(x);
+    let hi = s1;
+    for (let i = 0; i < 30; i++) {
+      const m = (lo + hi) / 2;
+      if (dist(x, m) > g) lo = m;
+      else hi = m;
+    }
+    cache.set(key, lo);
+    return lo;
+  };
+}
+
+/** Порог утоплен на столько внутрь от наружной поверхности. */
+const SILL_INSET = 150;
+
+/** Сколько места по глубине у двери над порогом в точке (x, z): у низа дверь тоньше. */
+function sillRoom(f: BodyForm, x: number, z: number) {
+  if (z > 420) return Infinity;
+  return Math.max(12, f.halfWidth(x, z) - (f.hw - SILL_INSET + 45) - 8);
 }
 
 /** Верх бампера на носу: по центру под решёткой, у фар — под фарами. */

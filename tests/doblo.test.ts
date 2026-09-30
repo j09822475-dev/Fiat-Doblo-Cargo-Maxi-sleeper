@@ -3,6 +3,7 @@ import { createDobloProject } from '../src/parts/doblo-project';
 import { buildAll, toInput } from '../src/app/build';
 import { CheckEngine } from '../src/checks/engine';
 import type { Project } from '../src/core/types';
+import { formOf } from '../src/app/build';
 
 function check(project: Project) {
   const meshes = buildAll(project);
@@ -17,12 +18,29 @@ describe('проект Doblò Cargo Maxi', () => {
     const { meshes, res } = check(project);
     for (const p of project.parts) expect(meshes.get(p.id)!.geometry.index!.count, p.id).toBeGreaterThan(0);
     const lines = res.issues.map((i) => `${i.severity} ${i.kind} ${i.parts.join('/')} = ${i.value}`);
-    // известное предупреждение: неравномерность зазора фара/бампер в углу носа (разброс ~1,1 мм при норме 1,0)
-    const known = (l: string) => l.startsWith('warning gap-spread headlamp-') && l.includes('/bumper-front');
-    expect(lines.filter((l) => !known(l))).toEqual([]);
+    expect(lines).toEqual([]);
     // все стыки найдены
     expect(res.profiles.length).toBe(project.rules.filter((r) => r.kind === 'gap').length);
   }, 120000);
+
+  it('внутренние детали не выходят за наружную поверхность боковин', () => {
+    // пары, соединённые конструктивно, проверка коллизий пропускает — поэтому отдельный контроль габарита
+    const project = createDobloProject();
+    const f = formOf(project);
+    const meshes = buildAll(project);
+    const out: string[] = [];
+    for (const p of project.parts.filter((q) => q.layer === 'interior' || q.layer === 'powertrain')) {
+      const pos = meshes.get(p.id)!.geometry.attributes.position.array;
+      let worst = -Infinity;
+      for (let i = 0; i < pos.length; i += 3) {
+        const [x, y, z] = [pos[i], pos[i + 1], pos[i + 2]];
+        if (z < 450 || x < f.h.xNoseSeam || x > f.xRear) continue;
+        worst = Math.max(worst, Math.abs(y) - f.halfWidth(x, z));
+      }
+      if (worst > 0) out.push(`${p.id} +${worst.toFixed(1)}`);
+    }
+    expect(out).toEqual([]);
+  });
 
   it('увеличенный зазор двери 7 мм обнаруживается', () => {
     const project = createDobloProject();
@@ -44,7 +62,7 @@ describe('проект Doblò Cargo Maxi', () => {
 
   it('сиденье, сдвинутое назад, нарушает зазор до перегородки', () => {
     const project = createDobloProject();
-    project.parts.find((p) => p.id === 'seat-l')!.params.x = 1060;
+    project.parts.find((p) => p.id === 'seat-l')!.params.x = 1100;
     const { res } = check(project);
     expect(res.issues.some((i) => i.norm === 'seat-bulkhead' && i.parts.includes('seat-l'))).toBe(true);
   }, 120000);

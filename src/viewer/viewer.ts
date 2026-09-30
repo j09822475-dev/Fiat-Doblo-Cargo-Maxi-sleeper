@@ -290,6 +290,45 @@ export class Viewer {
     this.flyTo(t.clone().add(dv), t);
   }
 
+  /**
+   * Ортогональный снимок в масштабе mmPerPx с центром кадра в точке c (система кузова).
+   * Нужен для наложения на чертежи: пиксель кадра однозначно переводится в миллиметры.
+   */
+  orthoSnapshot(name: 'left' | 'right' | 'top' | 'front' | 'rear', c: Vec3, w: number, h: number, mmPerPx: number) {
+    const dirs = {
+      left: [[0, 0, -1], [0, 1, 0]], right: [[0, 0, 1], [0, 1, 0]], top: [[0, 1, 0], [0, 0, -1]],
+      front: [[1, 0, 0], [0, 1, 0]], rear: [[-1, 0, 0], [0, 1, 0]],
+    } as const;
+    const [dir, up] = dirs[name];
+    const cam = new THREE.OrthographicCamera(-w / 2, w / 2, h / 2, -h / 2, 10, 60000);
+    const t = this.worldOf(c);
+    cam.position.copy(t).add(new THREE.Vector3(dir[0], dir[1], dir[2]).multiplyScalar(20000));
+    cam.up.set(up[0], up[1], up[2]);
+    cam.lookAt(t);
+    cam.updateProjectionMatrix();
+    const hidden: THREE.Object3D[] = [];
+    this.scene.traverse((o) => {
+      const helper = o instanceof THREE.Line || o instanceof THREE.Points || (o instanceof THREE.Mesh && o.material instanceof THREE.MeshBasicMaterial);
+      if (helper && o.visible) {
+        o.visible = false;
+        hidden.push(o);
+      }
+    });
+    const size = this.renderer.getSize(new THREE.Vector2());
+    const ratio = this.renderer.getPixelRatio();
+    const bg = this.scene.background;
+    this.scene.background = null;
+    this.renderer.setPixelRatio(1);
+    this.renderer.setSize(Math.round(w / mmPerPx), Math.round(h / mmPerPx), false);
+    this.renderer.render(this.scene, cam);
+    const url = this.renderer.domElement.toDataURL('image/png');
+    this.renderer.setPixelRatio(ratio);
+    this.renderer.setSize(size.x, size.y, false);
+    this.scene.background = bg;
+    for (const o of hidden) o.visible = true;
+    return url;
+  }
+
   flyTo(pos: THREE.Vector3, target: THREE.Vector3) {
     this.anim = { from: this.camera.position.clone(), to: pos, tFrom: this.controls.target.clone(), tTo: target, t: 0 };
   }

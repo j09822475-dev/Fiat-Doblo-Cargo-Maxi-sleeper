@@ -18,9 +18,11 @@ export interface Hardpoints {
   /** Проём сдвижной двери. */
   xSlideFront: number;
   xSlideRear: number;
-  /** Порог проёмов и линия остекления. */
+  /** Порог проёмов, низ дверей и линия остекления (у стойки A и у стойки B). */
   zSill: number;
+  zDoorBottom: number;
   zBelt: number;
+  zBeltRear: number;
   /** Задний проём. */
   zRearSill: number;
   zRearTop: number;
@@ -29,24 +31,33 @@ export interface Hardpoints {
   yLampInner: number;
   /** Шов между носовой поверхностью и крыльями. */
   xNoseSeam: number;
+  /** Верх решётки радиатора = низ передней кромки капота. */
+  zGrilleTop: number;
+  /** Радиус скругления сечения у крыши и у кромок капота. */
   roofRadius: number;
+  hoodRadius: number;
 }
 
+// Сверено с чертежом Fiat Doblò 2015 Cargo LWB (масштаб по базе 3105 мм и колее 1530 мм), см. docs/BLUEPRINT.md.
 export const DEFAULT_HARDPOINTS: Hardpoints = {
-  xRoofFront: 910,
-  xCowl: 90,
-  xDoorFront: 290,
-  xDoorRear: 1450,
-  xSlideFront: 1520,
-  xSlideRear: 2490,
+  xRoofFront: 1080,
+  xCowl: 240,
+  xDoorFront: 425,
+  xDoorRear: 1495,
+  xSlideFront: 1565,
+  xSlideRear: 2480,
   zSill: 410,
-  zBelt: 1060,
+  zDoorBottom: 275,
+  zBelt: 1070,
+  zBeltRear: 1135,
   zRearSill: 470,
   zRearTop: 1700,
-  zBumperTop: 750,
+  zBumperTop: 700,
   yLampInner: 400,
-  xNoseSeam: -830,
+  xNoseSeam: -800,
+  zGrilleTop: 880,
   roofRadius: 160,
+  hoodRadius: 70,
 };
 
 /** Кусочно-линейная кривая, сглаженная двойным скользящим средним. */
@@ -99,15 +110,18 @@ export class BodyForm {
     this.xRear = v.length - v.frontOverhang;
     this.hw = v.width / 2;
     const H = v.height;
-    // силуэт по оси машины: нос → капот → лобовое стекло → крыша → корма
+    // силуэт по оси машины: нос → капот → лобовое стекло → крыша → корма.
+    // Капот по чертежу: передняя кромка ~900 мм, к стеклу поднимается до ~1160 мм.
     this.topLine = smoothCurve(
       [
-        [this.xNose - 20, 1010],
-        [-690, 1075],
-        [-290, 1125],
-        [h.xCowl, 1170],
-        [h.xRoofFront + 20, H - 10],
-        [h.xRoofFront + 180, H + 7],
+        [this.xNose - 20, h.zGrilleTop],
+        [h.xNoseSeam, h.zGrilleTop + 30],
+        [-600, 1000],
+        [-330, 1070],
+        [0, 1115],
+        [h.xCowl, 1160],
+        [h.xRoofFront, H - 10],
+        [h.xRoofFront + 160, H + 7],
         [this.xRear - 140, H - 3],
         [this.xRear, H - 30],
       ],
@@ -118,8 +132,16 @@ export class BodyForm {
     this.noseW = this.hw - 130 * Math.pow((-290 - this.noseX) / 650, 2.4);
   }
 
+  /** Радиус скругления сечения: у капота меньше (кромка капота и крыла), по стойке стекла переходит в радиус крыши. */
+  radius(x: number) {
+    const { hoodRadius: a, roofRadius: b, xCowl } = this.h;
+    // переход — по стойке лобового стекла, где линия верха круто растёт: кромка крыла идёт без провала
+    const k = Math.min(1, Math.max(0, (x - xCowl) / 300));
+    return a + (b - a) * k * k * (3 - 2 * k);
+  }
+
   shoulder(x: number) {
-    return this.topLine(x) - this.h.roofRadius;
+    return this.topLine(x) - this.radius(x);
   }
 
   /** Завал боковин вверху и подворот внизу. */
@@ -135,11 +157,12 @@ export class BodyForm {
     return this.xNose - 12;
   }
 
-  /** Отступ носа назад на высоте z: выше бампера нос плавно уходит назад
+  /** Отступ носа назад на высоте z: от верха бампера нос плавно уходит назад
    *  и у кромки капота выходит точно на шов — нос и капот стыкуются без ступеньки. */
   noseRetreat(z: number) {
     const zTop = this.topLine(this.h.xNoseSeam);
-    const k = Math.min(1, Math.max(0, (z - 720) / (zTop - 720)));
+    const z0 = 560;
+    const k = Math.min(1, Math.max(0, (z - z0) / (zTop - z0)));
     return (this.h.xNoseSeam - this.noseTip) * k * k;
   }
 
@@ -159,6 +182,12 @@ export class BodyForm {
     const w = Math.abs(y) + this.tuck(z);
     const plan = w >= this.noseW ? this.noseX : this.noseX + (this.noseTip - this.noseX) * Math.pow(1 - Math.pow(w / this.noseW, 4), 0.25);
     return plan + this.noseRetreat(z);
+  }
+
+  /** Линия остекления передней двери: поднимается от стойки A к стойке B. */
+  belt(x: number) {
+    const { zBelt, zBeltRear, xDoorFront, xDoorRear } = this.h;
+    return zBelt + ((zBeltRear - zBelt) * (x - xDoorFront)) / (xDoorRear - xDoorFront);
   }
 
   /** Верх колёсной арки в станции x (−∞ вне арок). */
@@ -186,14 +215,14 @@ export class BodyForm {
 
   /** Полудлина дуги сечения верха (от оси до плеча) — для перевода зазора в параметр s. */
   topHalfArc(x: number) {
-    const R = this.h.roofRadius;
+    const R = this.radius(x);
     const cz = this.halfWidth(x, this.shoulder(x)) - R;
     return cz + (R * Math.PI) / 2;
   }
 
   /** Точка верха сечения: s ∈ [−1, 1] слева направо (крыша, капот, стекло). */
   top(x: number, s: number, off = 0): P {
-    const R = this.h.roofRadius;
+    const R = this.radius(x);
     const ys = this.shoulder(x);
     const cz = this.halfWidth(x, ys) - R;
     const a = cz / (cz + (R * Math.PI) / 2);
@@ -210,7 +239,7 @@ export class BodyForm {
 
   /** Высота верха сечения в точке (x, y). */
   sectionTop(x: number, y: number) {
-    const R = this.h.roofRadius;
+    const R = this.radius(x);
     const ys = this.shoulder(x);
     const hwS = this.halfWidth(x, ys);
     const cz = hwS - R;
@@ -239,17 +268,17 @@ export class BodyForm {
     return this.halfWidth(this.xRear, z) - 75;
   }
 
-  /** Задний конец фары на крыле. */
-  readonly xLampEnd = -600;
+  /** Задний конец фары на крыле (по чертежу фара заходит на крыло почти до арки). */
+  readonly xLampEnd = -400;
 
   /** Доля 0…1 от шва носа до заднего конца фары. */
   lampU(x: number) {
     return Math.min(1, Math.max(0, (x - this.h.xNoseSeam) / (this.xLampEnd - this.h.xNoseSeam)));
   }
 
-  /** Низ фары на боковине: у носа на 30 мм ниже плеча, к концу фары сходится к плечу. */
+  /** Низ фары на боковине: у носа на 40 мм ниже плеча, к концу фары сходится к плечу. */
   lampBottom(x: number) {
-    return this.shoulder(x) - 30 * (1 - this.lampU(x));
+    return this.shoulder(x) - 40 * (1 - this.lampU(x));
   }
 
   /** Граница фары на скруглении крыла (параметр s сечения): у носа 0,8, к концу фары 1. */
@@ -259,6 +288,6 @@ export class BodyForm {
 
   /** Низ фары на носовой поверхности. */
   get zLampFront() {
-    return this.shoulder(this.h.xNoseSeam) - 30;
+    return this.shoulder(this.h.xNoseSeam) - 40;
   }
 }

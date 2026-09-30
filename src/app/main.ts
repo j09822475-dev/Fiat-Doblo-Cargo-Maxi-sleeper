@@ -1,6 +1,7 @@
 // Интерфейс системы проектирования кузова.
 import type { Issue, PartDef, Project, Severity, Vec3 } from '../core/types';
 import { createDobloProject } from '../parts/doblo-project';
+import { DEFAULT_HARDPOINTS } from '../geometry/bodyform';
 import { buildAll, formOf, toInput } from './build';
 import { buildPart } from '../parts/generators';
 import { Viewer, type ColorMode } from '../viewer/viewer';
@@ -40,13 +41,19 @@ const EYE = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-w
 const EYE_OFF = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 2l12 12M6.6 3.7C7 3.6 7.5 3.5 8 3.5c4.1 0 6.5 4.5 6.5 4.5a11 11 0 0 1-1.9 2.5M4.1 5.1A11 11 0 0 0 1.5 8s2.4 4.5 6.5 4.5c1 0 1.9-.3 2.7-.7"/></svg>';
 
 // ------------------------------------------------------------ состояние
-const STORAGE_KEY = 'doblo-body-project-v1';
+// v2: кузов сверен с чертежом Doblò 2015 Cargo LWB — старое автосохранение не подхватываем
+const STORAGE_KEY = 'doblo-body-project-v2';
+/** Проект из файла или хранилища: базовые точки, которых не было в старых версиях, — по умолчанию. */
+function normalize(p: Project): Project {
+  p.hardpoints = { ...(DEFAULT_HARDPOINTS as unknown as Record<string, number>), ...p.hardpoints };
+  return p;
+}
 function loadStored(): Project | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const p = JSON.parse(raw) as Project;
-    return p.format === 'doblo-body/1' ? p : null;
+    return p.format === 'doblo-body/1' ? normalize(p) : null;
   } catch {
     return null;
   }
@@ -293,7 +300,7 @@ function openProject() {
     try {
       const p = JSON.parse(await f.text()) as Project;
       if (p.format !== 'doblo-body/1') throw new Error('неизвестный формат файла');
-      project = p;
+      project = normalize(p);
       ui.selected = null;
       ui.result = null;
       rebuildAll();
@@ -709,12 +716,12 @@ function normsPane() {
 
 const HP_LABELS: Record<string, string> = {
   xRoofFront: 'Верх лобового стекла X', xCowl: 'Низ лобового стекла X', xDoorFront: 'Проём двери: перед X', xDoorRear: 'Проём двери: зад X (стойка B)',
-  xSlideFront: 'Сдвижная дверь: перед X', xSlideRear: 'Сдвижная дверь: зад X', zSill: 'Порог проёмов Z', zBelt: 'Линия остекления Z',
+  xSlideFront: 'Сдвижная дверь: перед X', xSlideRear: 'Сдвижная дверь: зад X', zSill: 'Порог проёмов Z', zDoorBottom: 'Низ дверей Z', zBelt: 'Линия остекления у стойки A, Z', zBeltRear: 'Линия остекления у стойки B, Z',
   zRearSill: 'Задний проём: низ Z', zRearTop: 'Задний проём: верх Z', zBumperTop: 'Верх переднего бампера Z', yLampInner: 'Внутренний край фар Y',
-  xNoseSeam: 'Шов носа и крыльев X', roofRadius: 'Радиус скругления крыши',
+  xNoseSeam: 'Шов носа и крыльев X', zGrilleTop: 'Верх решётки радиатора Z', roofRadius: 'Радиус скругления крыши', hoodRadius: 'Радиус кромок капота',
 };
 const VEH_LABELS: Record<string, string> = {
-  length: 'Длина', width: 'Ширина', height: 'Высота', wheelbase: 'База', frontOverhang: 'Передний свес', trackFront: 'Колея передняя',
+  length: 'Длина кузова без бамперов', width: 'Ширина', height: 'Высота', wheelbase: 'База', frontOverhang: 'Передний свес кузова (без бампера)', trackFront: 'Колея передняя',
   trackRear: 'Колея задняя', tireRadius: 'Радиус колеса', tireWidth: 'Ширина шины', archRadius: 'Радиус выреза арки', bodyBottom: 'Нижняя кромка кузова Z',
 };
 
@@ -808,7 +815,7 @@ viewer.view('iso');
 // Управление из консоли и для автоматических снимков экрана.
 Object.assign(window, {
   app: {
-    viewer, ui, runChecks, select, showIssue, renderAll, applyVisibility,
+    viewer, ui, runChecks, select, showIssue, renderAll, applyVisibility, rebuildAll,
     get project() { return project; },
     get result() { return ui.result; },
   },
