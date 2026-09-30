@@ -41,6 +41,8 @@ function patch(
   normalAt?: (p: P) => P,
   /** Минимальная ширина участка в единицах b (мм или доля дуги сечения). */
   minSpan = 0.5,
+  /** Распределение столбцов сетки по a: u ∈ [0, 1] → доля длины (по умолчанию равномерно). */
+  warp: (u: number) => number = (u) => u,
 ) {
   const lo = fn(b0);
   const hi = fn(b1);
@@ -67,7 +69,7 @@ function patch(
     return;
   }
   const coord = (u: number, v: number): [number, number] => {
-    const a = a0 + (a1 - a0) * u;
+    const a = a0 + (a1 - a0) * warp(u);
     const h = hi(a);
     const l = Math.min(lo(a), h);
     return [a, l + (h - l) * v];
@@ -100,8 +102,11 @@ function side(
 }
 
 /** Участок верха сечения (крыша, капот, стекло): x ∈ [x0, x1], s ∈ [s0(x), s1(x)]. */
-function top(c: Ctx, x0: number, x1: number, s0: number | F, s1: number | F, depth: number | ((x: number, s: number) => number), off = 0, nu = 20, nv = 24) {
-  patch(c, x0, x1, s0, s1, (x, s) => c.f.top(x, s, off), depth, Math.max(nu, Math.ceil(Math.abs(x1 - x0) / 20)), nv, undefined, undefined, 0.0005);
+function top(
+  c: Ctx, x0: number, x1: number, s0: number | F, s1: number | F, depth: number | ((x: number, s: number) => number),
+  off = 0, nu = 20, nv = 24, warp?: (u: number) => number,
+) {
+  patch(c, x0, x1, s0, s1, (x, s) => c.f.top(x, s, off), depth, Math.max(nu, Math.ceil(Math.abs(x1 - x0) / 20)), nv, undefined, undefined, 0.0005, warp);
 }
 
 /** Участок носовой поверхности: y ∈ [y0, y1], z ∈ [zlo(y), zhi(y)]. */
@@ -115,6 +120,12 @@ function front(c: Ctx, y0: number, y1: number, zlo: number | F, zhi: number | F,
     },
     depth, nu, nv, undefined, () => [1, 0, 0],
   );
+}
+
+/** Участок поверхности, огибающей угол носа: a — координата обхода (BodyForm.wrapPoint), z ∈ [zlo(a), zhi(a)]. */
+function wrap(c: Ctx, a0: number, a1: number, zlo: number | F, zhi: number | F, depth: number | ((a: number, z: number) => number), nu: number, nv: number) {
+  const { f } = c;
+  patch(c, a0, a1, zlo, zhi, (a, z) => f.wrapPoint(a, z), depth, nu, nv, undefined, (q) => f.wrapInward(q));
 }
 
 /** Участок задней плоскости кузова: z ∈ [z0, z1], y ∈ [y0(z), y1(z)]. */
@@ -180,14 +191,16 @@ const G: Record<string, Gen> = {
       side(c, s, h.xDoorRear, lampX - 3, low, dt, t, { nu: 50, nv: 48 });
     }
     // угол у заднего фонаря: ниже и выше фонаря
-    side(c, s, lampX - 3, f.xRear, low, 897, t, { nu: 6, nv: 8 });
-    side(c, s, lampX - 3, f.xRear, 1563, dt, t, { nu: 6, nv: 4 });
+    const [cut0, cut1] = f.tailCut;
+    side(c, s, lampX - 3, f.xRear, low, cut0, t, { nu: 6, nv: 8 });
+    side(c, s, lampX - 3, f.xRear, cut1, dt, t, { nu: 6, nv: 4 });
     // стойка лобового стекла (дуга верха сечения)
     top(c, h.xCowl, h.xRoofFront, s > 0 ? 0.9 : -1, s > 0 ? 1 : -0.9, t, 0, 16, 4);
   },
 
   roof(c) {
-    top(c, c.f.h.xRoofFront, c.f.xRear, -1, 1, 0.8, 0, 40, 30);
+    // мелкий шаг поперёк: на скруглении крыши хорды не должны срезать дуги каркаса под обшивкой
+    top(c, c.f.h.xRoofFront, c.f.xRear, -1, 1, 0.8, 0, 40, 120);
   },
 
   // Переднее крыло: от шва носа до проёма двери, снизу — бампер и арка, сверху — капот и фара
@@ -210,13 +223,19 @@ const G: Record<string, Gen> = {
     const h = f.h;
     const g = p.gap;
     const edge = hoodEdge(f, g);
+    // передняя кромка капота изогнута в плане (BodyForm.hoodFrontX), сбоку капот ограничен фарами
+    const lim = (x: number) => Math.min(edge(x), f.hoodFrontS(x));
     // у кромок — отбортовка толщиной p.flange, к середине капот набирает полную глубину
     const flange = p.flange;
-    const d = (x: number, s: number) =>
-      Math.min(p.depth, flange + 0.3 * Math.min(x - h.xNoseSeam, h.xCowl - g - x, (edge(x) - Math.abs(s)) * f.topHalfArc(x)));
-    top(c, h.xNoseSeam, h.xCowl - g, (x) => -edge(x), edge, d, 0, 40, 96);
+    const d = (x: number, s: number) => {
+      const y = f.top(x, s)[1];
+      return Math.min(p.depth, flange + 0.3 * Math.min(x - f.hoodFrontX(y), h.xCowl - g - x, (lim(x) - Math.abs(s)) * f.topHalfArc(x)));
+    };
+    // по центру передняя кромка прямая (станция xLampFront), сбоку капот ограничен фарами — одним куском
+    // у передней кромки сетка мельче: там боковая кромка капота изгибается вдоль фары
+    top(c, f.xLampFront, h.xCowl - g, (x) => -lim(x), lim, d, 0, 80, 96, (u) => Math.pow(u, 1.7));
     // передняя кромка капота над решёткой, между фарами
-    front(c, -h.yLampInner + g, h.yLampInner - g, h.zGrilleTop + g, (y) => f.sectionTop(h.xNoseSeam, y) - 1, flange, 0, 16, 4);
+    front(c, -h.yLampInner + g, h.yLampInner - g, h.zGrilleTop + g, (y) => f.hoodFrontZ(y) - 1, flange, 0, 16, 4);
   },
 
   frontDoor(c, p) {
@@ -275,12 +294,18 @@ const G: Record<string, Gen> = {
       const lampIn = (z: number) => f.rearEdge(z) + 22;
       const y = (fz: F) => (s > 0 ? fz : (z: number) => -fz(z));
       const pair = (a: F, b: F): [F, F] => (s > 0 ? [a, b] : [y(b), y(a)]);
-      rear(c, h.zRearSill + 1, 897, ...pair(inner, hw), t, 0, 12, 4);
-      rear(c, 897, 1563, ...pair(inner, lampIn), t, 0, 20, 2);
-      rear(c, 1563, h.zRearTop, ...pair(inner, hw), t, 0, 6, 4);
+      const [cut0, cut1] = f.tailCut;
+      rear(c, h.zRearSill + 1, cut0, ...pair(inner, hw), t, 0, 12, 4);
+      rear(c, cut0, cut1, ...pair(inner, lampIn), t, 0, 20, 2);
+      rear(c, cut1, h.zRearTop, ...pair(inner, hw), t, 0, 6, 4);
     }
-    const yMax = f.rearEdge(h.zRearTop);
-    patch(c, -yMax, yMax, h.zRearTop, (yy) => f.sectionTop(f.xRear, yy) - 2, (yy, z) => [f.xRear, yy, z], t, 24, 6);
+    // верхняя поперечина — на всю ширину сечения задка, вместе со скруглёнными углами крыши
+    const R = f.radius(f.xRear);
+    const ys = f.shoulder(f.xRear);
+    const cz = f.halfWidth(f.xRear, ys) - R;
+    const zt = h.zRearTop;
+    const yMax = (zt > ys ? cz + Math.sqrt(Math.max(0, R * R - (zt - ys) ** 2)) : f.halfWidth(f.xRear, zt)) - 1;
+    patch(c, -yMax, yMax, zt, (yy) => f.sectionTop(f.xRear, yy) - 2, (yy, z) => [f.xRear, yy, z], t, 40, 6);
   },
 
   windshield(c, p) {
@@ -295,26 +320,50 @@ const G: Record<string, Gen> = {
     const s = p.side;
     const g = p.gap;
     const yIn = h.yLampInner;
-    // лицевая часть на носу: сверху уходит под кромку капота (зазор g + отбортовка капота),
-    // у угла продолжается на скругление крыла
-    const yS = Math.abs(f.top(h.xNoseSeam, f.lampS(h.xNoseSeam))[1]);
-    const yEdge = f.frontHalf(h.zGrilleTop);
-    // под кромкой капота фара ниже на зазор g; за границей капота выходит на скругление
-    const zUnder = (y: number) => f.sectionTop(h.xNoseSeam, y) - g - 0.5;
-    const zOpen = (y: number) => f.sectionTop(h.xNoseSeam, y);
-    // корпус фары уходит вглубь, но у верхней кромки и у угла носа — тонкий край
-    const dF = (zt: F) => (y: number, z: number) => Math.min(p.depth, 2 + (zt(y) - z) * 1.2, 2 + (yEdge - Math.abs(y)) * 1.0);
-    const m = (fz: F): F => (y) => fz(-y);
+    const A = f.wrapA;
+    const aEnd = A + (f.xLampEnd - h.xNoseSeam);
+    // лицевая часть сверху уходит под кромку капота (зазор g), дальше по кромке капота доходит
+    // до верха сечения, где начинается часть фары на скруглении крыла
+    const yS = f.hoodFrontY(f.xLampFront);
+    const xOf = (a: number) => h.xNoseSeam + (a - A);
+    const lo = (a: number) => (a <= A ? f.zLampFront : f.lampBottom(xOf(a)));
+    // под капотом фара ниже кромки на зазор, за краем капота выходит на кромку
+    const hiUnder = (a: number) => f.hoodFrontZ(a) - g - 0.5;
+    const hi = (a: number) => (a > A ? f.shoulder(xOf(a)) : f.hoodFrontZ(a));
+    // корпус уходит вглубь, у верхней кромки и на крыле — тонкий край
+    const d = (a: number, z: number) => Math.min(p.depth, 2 + ((a < yS ? hiUnder(a) : hi(a)) - z) * 1.2, 6 + Math.max(0, A - a));
+    // под капотом и за его краем — два участка со ступенькой ровно по краю; лицевая часть
+    // и часть на крыле — одним куском: угол носа без шва и излома
+    const n1 = Math.max(8, Math.round((140 * (yS - yIn)) / (aEnd - yIn)));
     if (s > 0) {
-      front(c, yIn, yS, f.zLampFront, zUnder, dF(zUnder), 0, 60, 8);
-      front(c, yS, yEdge, f.zLampFront, zOpen, dF(zOpen), 0, 20, 8);
+      wrap(c, yIn, yS, lo, hiUnder, d, n1, 16);
+      wrap(c, yS, aEnd, lo, hi, d, 140 - n1, 16);
     } else {
-      front(c, -yS, -yIn, f.zLampFront, m(zUnder), dF(m(zUnder)), 0, 60, 8);
-      front(c, -yEdge, -yS, f.zLampFront, m(zOpen), dF(m(zOpen)), 0, 20, 8);
+      wrap(c, -yS, -yIn, (a) => lo(-a), (a) => hiUnder(-a), (a, z) => d(-a, z), n1, 16);
+      wrap(c, -aEnd, -yS, (a) => lo(-a), (a) => hi(-a), (a, z) => d(-a, z), 140 - n1, 16);
     }
-    // часть на скруглении крыла и на боковине
+    // часть на скруглении крыла (верх сечения). Перед швом — между кромкой капота и внутренней
+    // кромкой фары; кромка капота там идёт почти поперёк, поэтому сетка строится по Y
+    const sIn = f.lampS(h.xNoseSeam);
+    const yIn0 = Math.abs(f.top(f.xLampFront, sIn)[1]);
+    const xInner = (y: number) => {
+      // станция, где внутренняя кромка фары (s = sIn) проходит через |y|
+      let lo2 = f.xLampFront;
+      let hi2 = h.xNoseSeam;
+      if (Math.abs(f.top(hi2, sIn)[1]) <= y) return hi2;
+      for (let i = 0; i < 30; i++) {
+        const m = (lo2 + hi2) / 2;
+        if (Math.abs(f.top(m, sIn)[1]) < y) lo2 = m;
+        else hi2 = m;
+      }
+      return lo2;
+    };
+    const yOf = (a: number) => s * a;
+    patch(
+      c, yIn0, f.wrapA, (a) => f.hoodFrontX(a), (a) => xInner(a),
+      (a, x) => f.top(x, f.topS(x, yOf(a))), 3, 40, 8, undefined, undefined, 0.3,
+    );
     top(c, h.xNoseSeam, f.xLampEnd, s > 0 ? (x) => f.lampS(x) : -1, s > 0 ? 1 : (x) => -f.lampS(x), 3, 0, 16, 6);
-    side(c, s, h.xNoseSeam, f.xLampEnd, (x) => f.lampBottom(x), (x) => f.shoulder(x), 6, { nu: 60, nv: 4 });
   },
 
   grille(c, p) {
@@ -327,27 +376,34 @@ const G: Record<string, Gen> = {
   bumperFront(c, p) {
     const { f } = c;
     const h = f.h;
-    // по центру верх бампера — под решёткой, у фар — под фарами
+    // по центру верх бампера — под решёткой, у фар — под фарами, на боковине — косо вниз к арке
     const topFront = bumperFrontTop(f, p.gapLamp);
-    const dF = (y: number, z: number) => Math.min(p.depth, 4 + (topFront(y) - z) * 0.8);
-    const yb = f.frontHalf(600);
-    front(c, -yb, yb, 240, topFront, dF, 0, 180, 10);
-    for (const s of [-1, 1]) {
-      const top = (x: number) => bumperSideTop(f, x, p.gapLamp);
-      // у угла носа нормаль боковины сильно наклонена вперёд: там бампер тонкий, чтобы объём не уходил под фару
-      const dS = (x: number, z: number) => Math.min(p.depth, 4 + (top(x) - z) * 0.8, 4 + (-391.5 - x) * 0.8, 4 + (x - h.xNoseSeam) * 0.5);
-      side(c, s, h.xNoseSeam, -391.5, 240, top, dS, { nu: 90, nv: 8, arch: 2 });
-    }
+    const A = f.wrapA;
+    const xArch = -391.5;
+    const aEnd = A + (xArch - h.xNoseSeam);
+    const xOf = (a: number) => h.xNoseSeam + (Math.abs(a) - A);
+    const top = (a: number) => (Math.abs(a) <= A ? topFront(a) : bumperSideTop(f, xOf(a), p.gapLamp));
+    const low = (a: number) => (Math.abs(a) <= A ? 240 : Math.max(240, f.archTop(xOf(a), 2)));
+    // у угла носа и у арки бампер тонкий: объём не уходит под фару и в арку
+    const d = (a: number, z: number) => {
+      const aa = Math.abs(a);
+      return Math.min(p.depth, 4 + (top(a) - z) * 0.8, 4 + Math.abs(aa - A) * 0.5, aa > A ? 4 + (xArch - xOf(a)) * 0.8 : Infinity);
+    };
+    // лицевая часть и обе боковые — одним куском, без швов на углах носа
+    wrap(c, -aEnd, aEnd, low, top, d, 360, 36);
   },
 
+  // задний бампер: поперечина со ступенькой под створками и боковины от колёсных арок —
+  // закрывают низ кузова за аркой, как у серийного фургона
   bumperRear(c, p) {
     const { f } = c;
-    const w = f.halfWidth(f.xRear, 400) + 20;
     const x1 = f.xRear + p.protrusion;
-    box8(c.mb, [
-      [f.xRear - 190, -w + 40, 265], [x1, -w + 40, 265], [x1, w - 40, 265], [f.xRear - 190, w - 40, 265],
-      [f.xRear - 190, -w, 468], [x1, -w, 468], [x1, w, 468], [f.xRear - 190, w, 468],
-    ]);
+    const [z0, z1] = [265, 468];
+    // спереди — с зазором от арки заднего колеса (её радиус ~410 мм)
+    const x0 = f.v.wheelbase + f.v.archRadius + 25;
+    const w = (z: number) => f.halfWidth(x1, z);
+    rear(c, z0, z1, (z) => -w(z), w, p.protrusion + 20, p.protrusion, 40, 6);
+    for (const s of [-1, 1]) side(c, s, x0, x1, z0, z1, 40, { nu: 20, nv: 6 });
   },
 
   tailLamp(c, p) {
@@ -356,9 +412,12 @@ const G: Record<string, Gen> = {
     const g = p.gap;
     const hw = (z: number) => f.halfWidth(f.xRear, z);
     const yin = (z: number) => f.rearEdge(z) + 22 + g;
-    if (s > 0) rear(c, 900, 1490, yin, hw, p.depth, 0, 16, 4);
-    else rear(c, 900, 1490, (z) => -hw(z), (z) => -yin(z), p.depth, 0, 16, 4);
-    side(c, s, f.xRear - 110, f.xRear, 900, 1490, p.depth, { nu: 6, nv: 12 });
+    // фонарь заполняет вырез в боковине и панели задка с зазором g
+    const z0 = f.tailCut[0] + g;
+    const z1 = f.tailCut[1] - g;
+    if (s > 0) rear(c, z0, z1, yin, hw, p.depth, 0, 16, 4);
+    else rear(c, z0, z1, (z) => -hw(z), (z) => -yin(z), p.depth, 0, 16, 4);
+    side(c, s, f.xRear - 110, f.xRear, z0, z1, p.depth, { nu: 6, nv: 12 });
   },
 
   chmsl(c) {
@@ -367,8 +426,16 @@ const G: Record<string, Gen> = {
   },
 
   fogLamp(c, p) {
-    const pt = c.f.front(p.side * p.y, p.z);
-    cylinder(c.mb, [pt[0] + 40, pt[1], pt[2]], [pt[0] - 6, pt[1], pt[2]], 38);
+    // ось фары — по нормали к поверхности бампера: стекло выступает на 3 мм, корпус уходит внутрь
+    const f = c.f;
+    const y = p.side * p.y;
+    const pt = f.front(y, p.z);
+    const q = f.front(y + 2, p.z);
+    const t = [q[0] - pt[0], q[1] - pt[1]];
+    const l = Math.hypot(t[0], t[1]);
+    const n = [-t[1] / l, t[0] / l];
+    if (n[0] > 0) (n[0] = -n[0]), (n[1] = -n[1]);
+    cylinder(c.mb, [pt[0] + 3 * n[0], pt[1] + 3 * n[1], pt[2]], [pt[0] - 40 * n[0], pt[1] - 40 * n[1], pt[2]], 38);
   },
 
   plateRear(c) {
@@ -420,7 +487,7 @@ const G: Record<string, Gen> = {
   },
 
   roofBow(c, p) {
-    top(c, p.x - 25, p.x + 25, -0.93, 0.93, 35, -1.5, 2, 20);
+    top(c, p.x - 25, p.x + 25, -0.93, 0.93, 35, -2.5, 2, 80);
   },
 
   // пол кабины начинается за передними арками; между арками — наклонный щиток ног
@@ -455,7 +522,8 @@ const G: Record<string, Gen> = {
 
   radiatorSupport(c) {
     const x = c.f.h.xNoseSeam + 20;
-    aabb(c.mb, [x, -640, 480], [x + 30, 640, c.f.h.zGrilleTop - 30]);
+    // верх рамки закрывает щель под кромкой капота
+    aabb(c.mb, [x, -640, 480], [x + 30, 640, c.f.h.zGrilleTop]);
   },
 
   frontRail(c, p) {
@@ -595,13 +663,15 @@ function bumperSideTop(f: BodyForm, x: number, gap = 1.5) {
 function hoodEdge(f: BodyForm, g: number) {
   const h = f.h;
   const cache = new Map<number, number>();
-  // граница, от которой откладывается зазор: кромка фары, за фарой — верхняя кромка крыла (s = 1),
-  // у шва носа — верх лицевой части фары
+  // граница, от которой откладывается зазор: кромка фары, за фарой — верхняя кромка крыла (s = 1)
   const border = (x: number) => f.top(x, f.lampS(x));
-  // у шва носа: верх лицевой части фары вместе с её толщиной (корпус уходит назад на ~2 мм)
-  const seamTop: P[] = [];
-  for (let k = 0; k <= 20; k++) seamTop.push(f.top(h.xNoseSeam, f.lampS(h.xNoseSeam) + ((1 - f.lampS(h.xNoseSeam)) * k) / 20));
-  const seamBack = seamTop.map((q): P => [q[0] + 2.5, q[1], q[2]]);
+  // спереди фара ограничена кромкой капота: её участок от угла фары до угла носа
+  const yS = f.hoodFrontY(f.xLampFront);
+  const front: P[] = [];
+  for (let k = 0; k <= 24; k++) {
+    const y = -(yS + ((f.wrapA - yS) * k) / 24);
+    front.push([f.hoodFrontX(y), y, f.hoodFrontZ(y)]);
+  }
   // расстояние от точки до ломаной (до отрезков, а не до вершин — иначе зазор выходит меньше заданного)
   const toPolyline = (p: P, pts: P[]) => {
     let best = Infinity;
@@ -619,9 +689,10 @@ function hoodEdge(f: BodyForm, g: number) {
   const dist = (x: number, s: number) => {
     const p = f.top(x, s);
     const line: P[] = [];
-    for (let k = -12; k <= 12; k++) line.push(border(Math.min(h.xCowl, Math.max(h.xNoseSeam, x + k * 5))));
-    const d = toPolyline(p, line);
-    return x - h.xNoseSeam < 4 * g ? Math.min(d, toPolyline(p, seamTop), toPolyline(p, seamBack), toPolyline(p, [seamTop[0], seamBack[0]])) : d;
+    for (let k = -12; k <= 12; k++) line.push(border(Math.min(h.xCowl, Math.max(f.xLampFront, x + k * 5))));
+    const q: P = [p[0], -Math.abs(p[1]), p[2]];
+    const d = toPolyline(q, line.map((r): P => [r[0], -Math.abs(r[1]), r[2]]));
+    return x - h.xNoseSeam < 4 * g ? Math.min(d, toPolyline(q, front)) : d;
   };
   return (x: number) => {
     const key = Math.round(x * 100);

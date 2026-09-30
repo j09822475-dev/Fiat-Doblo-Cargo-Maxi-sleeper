@@ -53,7 +53,9 @@ export class Viewer {
   onPick: (part: string | null, p: Vec3 | null, additive: boolean) => void = () => {};
 
   constructor(private canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
+    // логарифмическая глубина: сцена в миллиметрах от 20 мм до 60 м, а детали лежат в 1–2 мм друг от друга —
+    // с обычным (особенно 16-битным на мобильных) буфером глубины внутренние детали просвечивают сквозь обшивку
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true, logarithmicDepthBuffer: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.localClippingEnabled = true;
     this.camera = new THREE.PerspectiveCamera(35, 1, 20, 60000);

@@ -140,7 +140,11 @@ export class CheckEngine {
       issues.push(...res.issues);
     });
 
-    // --- 5. нормативы положения
+    // --- 5. сквозные просветы в наружной обшивке
+    onProgress(0.95, 'Просветы в обшивке');
+    issues.push(...this.openings(project));
+
+    // --- 6. нормативы положения
     onProgress(0.97, 'Нормативы');
     issues.push(...this.regulations(project));
 
@@ -287,6 +291,132 @@ export class CheckEngine {
     out.push(...found.values());
     return { issues: out, poses: list.length };
   }
+
+  /**
+   * Сквозные просветы в наружной обшивке. Кузов просвечивается параллельными лучами с пяти сторон
+   * (слева, справа, спереди, сзади, сверху). Луч, который первым попадает в салон или агрегат,
+   * а на виде сбоку — в противоположный борт, прошёл через отверстие. Соседние такие лучи
+   * собираются в пятна; пятно больше нормы (стыки панелей уже) — дефект. Так находятся дыры,
+   * которые правила зазоров не видят: у кромки отверстия нет соседней детали в пределах поиска.
+   */
+  private openings(project: Project): Issue[] {
+    const norm = clearanceNorm('skin-opening', project);
+    const step = 12;
+    const merged = this.mergedBvh();
+    if (!merged) return [];
+    const { bvh, partOf, ids, box } = merged;
+    const layerOf = ids.map((id) => this.items.get(id)!.def.layer);
+    const inside = new Set(['interior', 'powertrain']);
+    const hw = project.vehicle.width / 2;
+    const out: Issue[] = [];
+    type View = { name: string; dir: THREE.Vector3; origin: (a: number, b: number) => THREE.Vector3; a: [number, number]; b: [number, number]; far?: (p: THREE.Vector3) => boolean };
+    const views: View[] = [
+      { name: 'слева', dir: new THREE.Vector3(0, 1, 0), origin: (x, z) => new THREE.Vector3(x, box.min.y - 100, z), a: [box.min.x, box.max.x], b: [box.min.z, box.max.z], far: (p) => p.y > -hw + 600 },
+      { name: 'справа', dir: new THREE.Vector3(0, -1, 0), origin: (x, z) => new THREE.Vector3(x, box.max.y + 100, z), a: [box.min.x, box.max.x], b: [box.min.z, box.max.z], far: (p) => p.y < hw - 600 },
+      { name: 'спереди', dir: new THREE.Vector3(1, 0, 0), origin: (y, z) => new THREE.Vector3(box.min.x - 100, y, z), a: [box.min.y, box.max.y], b: [box.min.z, box.max.z] },
+      { name: 'сзади', dir: new THREE.Vector3(-1, 0, 0), origin: (y, z) => new THREE.Vector3(box.max.x + 100, y, z), a: [box.min.y, box.max.y], b: [box.min.z, box.max.z] },
+      { name: 'сверху', dir: new THREE.Vector3(0, 0, -1), origin: (x, y) => new THREE.Vector3(x, y, box.max.z + 100), a: [box.min.x, box.max.x], b: [box.min.y, box.max.y] },
+    ];
+    const ray = new THREE.Ray();
+    for (const v of views) {
+      const na = Math.ceil((v.a[1] - v.a[0]) / step);
+      const nb = Math.ceil((v.b[1] - v.b[0]) / step);
+      const flag = new Uint8Array(na * nb);
+      const hitPart = new Int32Array(na * nb).fill(-1);
+      const hitPoint = new Float32Array(na * nb * 3);
+      for (let i = 0; i < na; i++) {
+        for (let j = 0; j < nb; j++) {
+          ray.origin.copy(v.origin(v.a[0] + (i + 0.5) * step, v.b[0] + (j + 0.5) * step));
+          ray.direction.copy(v.dir);
+          const hit = bvh.raycastFirst(ray, THREE.DoubleSide);
+          if (!hit || !hit.face) continue;
+          const part = partOf[hit.face.a];
+          const k = i * nb + j;
+          hitPart[k] = part;
+          hitPoint.set([hit.point.x, hit.point.y, hit.point.z], k * 3);
+          if (inside.has(layerOf[part]) || (v.far && v.far(hit.point))) flag[k] = 1;
+        }
+      }
+      // пятна из соседних лучей: считаются только те, что шире и выше двух шагов
+      const seen = new Uint8Array(na * nb);
+      for (let k0 = 0; k0 < flag.length; k0++) {
+        if (!flag[k0] || seen[k0]) continue;
+        const stack = [k0];
+        seen[k0] = 1;
+        let i0 = Infinity, i1 = -Infinity, j0 = Infinity, j1 = -Infinity;
+        const around = new Map<number, number>();
+        const rim: number[] = [];
+        while (stack.length) {
+          const k = stack.pop()!;
+          const i = Math.floor(k / nb);
+          const j = k % nb;
+          i0 = Math.min(i0, i); i1 = Math.max(i1, i); j0 = Math.min(j0, j); j1 = Math.max(j1, j);
+          for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const ii = i + di;
+            const jj = j + dj;
+            if (ii < 0 || jj < 0 || ii >= na || jj >= nb) continue;
+            const kk = ii * nb + jj;
+            if (flag[kk]) {
+              if (!seen[kk]) { seen[kk] = 1; stack.push(kk); }
+            } else if (hitPart[kk] >= 0) {
+              // края пятна: детали, в которые попадают соседние лучи, — это кромки отверстия
+              around.set(hitPart[kk], (around.get(hitPart[kk]) ?? 0) + 1);
+              rim.push(kk);
+            }
+          }
+        }
+        const w = (i1 - i0 + 1) * step;
+        const hgt = (j1 - j0 + 1) * step;
+        if (Math.min(w, hgt) <= norm.min) continue;
+        const parts = [...around.entries()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([p]) => ids[p]);
+        const at = rim.reduce<[number, number, number]>((s, kk) => [s[0] + hitPoint[kk * 3] / rim.length, s[1] + hitPoint[kk * 3 + 1] / rim.length, s[2] + hitPoint[kk * 3 + 2] / rim.length], [0, 0, 0]);
+        const names = parts.map((p) => this.items.get(p)!.def.title).join(' / ');
+        out.push({
+          id: `opening:${v.name}:${k0}`, severity: 'error', kind: 'opening',
+          title: `Сквозной просвет в обшивке (вид ${v.name}): ${names}`, parts, at: at.map(round) as Vec3,
+          value: Math.round(Math.max(w, hgt)), limit: `≤ ${norm.min} мм`, norm: norm.id, source: norm.source,
+        });
+      }
+    }
+    return out;
+  }
+
+  /** Все детали одной сеткой с общим BVH (для просвечивания лучами); пересобирается при изменении деталей. */
+  private mergedBvh() {
+    const ids = [...this.items.keys()];
+    const key = ids.map((id) => `${id}@${this.items.get(id)!.version}`).join(';');
+    if (this.merged?.key === key) return this.merged;
+    let nv = 0;
+    let ni = 0;
+    for (const id of ids) {
+      const g = this.items.get(id)!.geom;
+      nv += g.attributes.position.count;
+      ni += g.index!.count;
+    }
+    if (!ni) return null;
+    const pos = new Float32Array(nv * 3);
+    const idx = new Uint32Array(ni);
+    const partOf = new Int32Array(nv);
+    let ov = 0;
+    let oi = 0;
+    ids.forEach((id, p) => {
+      const g = this.items.get(id)!.geom;
+      pos.set(g.attributes.position.array as Float32Array, ov * 3);
+      const src = g.index!.array;
+      for (let i = 0; i < src.length; i++) idx[oi + i] = src[i] + ov;
+      partOf.fill(p, ov, ov + g.attributes.position.count);
+      ov += g.attributes.position.count;
+      oi += src.length;
+    });
+    const geom = new THREE.BufferGeometry();
+    geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geom.setIndex(new THREE.BufferAttribute(idx, 1));
+    geom.computeBoundingBox();
+    this.merged = { key, bvh: new MeshBVH(geom), partOf, ids, box: geom.boundingBox!.clone() };
+    return this.merged;
+  }
+
+  private merged?: { key: string; bvh: MeshBVH; partOf: Int32Array; ids: string[]; box: THREE.Box3 };
 
   private regulations(project: Project): Issue[] {
     const out: Issue[] = [];

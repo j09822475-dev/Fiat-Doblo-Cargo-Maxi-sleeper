@@ -42,6 +42,30 @@ describe('проект Doblò Cargo Maxi', () => {
     expect(out).toEqual([]);
   });
 
+  it('сетки деталей ориентированы согласованно (нет вывернутых треугольников)', () => {
+    // у согласованной сетки каждое ребро соседние треугольники проходят в противоположных направлениях
+    const project = createDobloProject();
+    const meshes = buildAll(project);
+    const bad: string[] = [];
+    for (const p of project.parts) {
+      const g = meshes.get(p.id)!.geometry;
+      const idx = g.index!.array;
+      // рёбра — по номерам вершин: так сравниваются только треугольники одной сетки,
+      // а совпадающие по месту стенки соседних участков детали не мешают
+      const seen = new Set<string>();
+      let twice = 0;
+      for (let t = 0; t < idx.length; t += 3) {
+        for (let e = 0; e < 3; e++) {
+          const k = `${idx[t + e]}>${idx[t + ((e + 1) % 3)]}`;
+          if (seen.has(k)) twice++;
+          seen.add(k);
+        }
+      }
+      if (twice) bad.push(`${p.id}: ${twice}`);
+    }
+    expect(bad).toEqual([]);
+  });
+
   it('увеличенный зазор двери 7 мм обнаруживается', () => {
     const project = createDobloProject();
     project.parts.find((p) => p.id === 'door-fl')!.params.gap = 7;
@@ -65,6 +89,16 @@ describe('проект Doblò Cargo Maxi', () => {
     project.parts.find((p) => p.id === 'seat-l')!.params.x = 1100;
     const { res } = check(project);
     expect(res.issues.some((i) => i.norm === 'seat-bulkhead' && i.parts.includes('seat-l'))).toBe(true);
+  }, 120000);
+
+  it('без заднего фонаря в обшивке остаётся сквозной просвет, и он обнаруживается', () => {
+    const project = createDobloProject();
+    project.parts = project.parts.filter((p) => p.id !== 'tail-l');
+    const { res } = check(project);
+    const holes = res.issues.filter((i) => i.kind === 'opening');
+    expect(holes.length).toBeGreaterThan(0);
+    // просвет — на месте фонаря: задний левый угол кузова на высоте 0,9…1,5 м
+    expect(holes.some((i) => i.at[0] > 3500 && i.at[1] < -600 && i.at[2] > 850 && i.at[2] < 1550)).toBe(true);
   }, 120000);
 
   it('задний фонарь выше 1500 мм нарушает Правила ЕЭК ООН № 48', () => {

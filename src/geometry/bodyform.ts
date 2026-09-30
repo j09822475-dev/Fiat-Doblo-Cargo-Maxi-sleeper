@@ -102,6 +102,12 @@ export class BodyForm {
   readonly topLine: (x: number) => number;
   private readonly noseX = -550;
   private readonly noseW: number;
+  /** Насколько передняя кромка капота выступает вперёд шва носа, мм. */
+  readonly hoodBulge = 50;
+  /** Показатель кривой кромки у фар: подобран так, что у угла носа она касательна к крылу. */
+  private readonly hoodP: number;
+  /** Полуширина прямого участка передней кромки капота (до внутреннего края фары сверху). */
+  private readonly hoodFlatY: number;
 
   constructor(v: VehicleParams, h: Hardpoints) {
     this.v = v;
@@ -130,6 +136,59 @@ export class BodyForm {
       this.xRear + 200,
     );
     this.noseW = this.hw - 130 * Math.pow((-290 - this.noseX) / 650, 2.4);
+    const W = this.noseCornerW;
+    const e = 1;
+    const slope = (this.planX(W) - this.planX(W - e)) / e;
+    // прямой участок кромки капота — до внутренней кромки фары в станции передней кромки
+    this.hoodFlatY = Math.abs(this.top(h.xNoseSeam - this.hoodBulge, this.lampS(h.xNoseSeam))[1]);
+    this.hoodP = (slope * (W - this.hoodFlatY)) / this.hoodBulge;
+  }
+
+  /** x носа в плане без поджатия по высоте (суперэллипс) для ширины w от оси. */
+  private planX(w: number) {
+    return w >= this.noseW ? this.noseX : this.noseX + (this.noseTip - this.noseX) * Math.pow(1 - Math.pow(w / this.noseW, 4), 0.25);
+  }
+
+  /** Передняя кромка капота в плане: прямая по центру, в зоне фар плавно уходит назад к углу носа. */
+  hoodFrontX(y: number) {
+    const W = this.noseCornerW;
+    const t = Math.min(1, Math.max(0, (Math.abs(y) - this.hoodFlatY) / (W - this.hoodFlatY)));
+    return this.h.xNoseSeam - this.hoodBulge * (1 - Math.pow(t, this.hoodP));
+  }
+
+  /** Обратная к hoodFrontX на участке у фар: полуширина кромки капота в станции x. */
+  hoodFrontY(x: number) {
+    const q = Math.min(1, Math.max(0, 1 - (this.h.xNoseSeam - x) / this.hoodBulge));
+    return this.hoodFlatY + (this.noseCornerW - this.hoodFlatY) * Math.pow(q, 1 / this.hoodP);
+  }
+
+  /** Высота передней кромки капота над точкой y. */
+  hoodFrontZ(y: number) {
+    return this.sectionTop(this.hoodFrontX(y), y);
+  }
+
+  /** Параметр s сечения в станции x для точки с поперечной координатой y (обратная к top). */
+  topS(x: number, y: number) {
+    const R = this.radius(x);
+    const ys = this.shoulder(x);
+    const cz = this.halfWidth(x, ys) - R;
+    const a = cz / (cz + (R * Math.PI) / 2);
+    const ay = Math.abs(y);
+    const sg = Math.sign(y) || 1;
+    if (ay <= cz) return (sg * ay * a) / cz;
+    const th = Math.acos(Math.min(1, (ay - cz) / R));
+    return sg * (a + (1 - th / (Math.PI / 2)) * (1 - a));
+  }
+
+  /** Станция передней кромки капота: здесь начинается и часть фары на верху сечения. */
+  get xLampFront() {
+    return this.h.xNoseSeam - this.hoodBulge;
+  }
+
+  /** Граница |s| верха сечения по передней кромке капота в станции x (перед швом носа). */
+  hoodFrontS(x: number) {
+    if (x >= this.h.xNoseSeam) return 1;
+    return Math.min(1, this.topS(x, this.hoodFrontY(x)));
   }
 
   /** Радиус скругления сечения: у капота меньше (кромка капота и крыла), по стойке стекла переходит в радиус крыши. */
@@ -157,15 +216,6 @@ export class BodyForm {
     return this.xNose - 12;
   }
 
-  /** Отступ носа назад на высоте z: от верха бампера нос плавно уходит назад
-   *  и у кромки капота выходит точно на шов — нос и капот стыкуются без ступеньки. */
-  noseRetreat(z: number) {
-    const zTop = this.topLine(this.h.xNoseSeam);
-    const z0 = 560;
-    const k = Math.min(1, Math.max(0, (z - z0) / (zTop - z0)));
-    return (this.h.xNoseSeam - this.noseTip) * k * k;
-  }
-
   /** Полуширина кузова в плане на станции x и высоте z. */
   halfWidth(x: number, z: number) {
     let w = this.hw;
@@ -177,11 +227,48 @@ export class BodyForm {
     return Math.max(2, w - this.tuck(z));
   }
 
-  /** x поверхности носа в точке (y, z): скругление в плане плюс отступ назад по высоте. */
+  /** x поверхности носа в точке (y, z). Внизу — суперэллипс носа (форма бампера), вверху нос
+   *  плавно выходит на переднюю кромку капота. Обе кривые проходят через угол носа на шве
+   *  с одной касательной, поэтому нос переходит в крылья без ребра на любой высоте. */
   xFront(y: number, z: number) {
     const w = Math.abs(y) + this.tuck(z);
-    const plan = w >= this.noseW ? this.noseX : this.noseX + (this.noseTip - this.noseX) * Math.pow(1 - Math.pow(w / this.noseW, 4), 0.25);
-    return plan + this.noseRetreat(z);
+    const plan = this.planX(w);
+    const z0 = 560;
+    const zTop = this.hoodFrontZ(y);
+    const k = Math.min(1, Math.max(0, (z - z0) / (zTop - z0)));
+    return plan + (this.hoodFrontX(y) - plan) * k * k;
+  }
+
+  /** Ширина носа в плане у шва (без подворота) — там нос переходит в крылья. */
+  private get noseCornerW() {
+    const u = (this.noseX - this.h.xNoseSeam) / (this.noseX - this.noseTip);
+    return this.noseW * Math.pow(Math.max(0, 1 - Math.pow(u, 4)), 0.25);
+  }
+
+  /** Координата обхода носа: a = 0 по оси машины, |a| = wrapA — угол носа на шве,
+   *  дальше |a| − wrapA — расстояние по X вдоль боковины. Знак a — сторона (Y). */
+  get wrapA() {
+    return this.noseCornerW;
+  }
+
+  /** Точка поверхности, огибающей нос и боковину: детали на углу носа (фары, бампер)
+   *  строятся одним куском без шва и излома между лицевой и боковой частью. */
+  wrapPoint(a: number, z: number): P {
+    const s = Math.sign(a) || 1;
+    const A = this.wrapA;
+    const aa = Math.abs(a);
+    if (aa <= A) return this.front(s * aa * (this.frontHalf(z) / A), z);
+    return this.side(s, this.h.xNoseSeam + (aa - A), z);
+  }
+
+  /** Горизонтальная нормаль внутрь кузова в точке p поверхности обхода носа. */
+  wrapInward(p: P): P {
+    const [x, y, z] = p;
+    const s = Math.sign(y) || 1;
+    if (x > this.h.xNoseSeam + 0.01) return this.sideInward(s, x, z);
+    const e = 2;
+    const dxdy = (this.xFront(y + e, z) - this.xFront(y - e, z)) / (2 * e);
+    return [1, -dxdy, 0];
   }
 
   /** Линия остекления передней двери: поднимается от стойки A к стойке B. */
@@ -205,7 +292,8 @@ export class BodyForm {
   sideInward(side: number, x: number, z: number): P {
     const e = 2;
     const wx = (this.halfWidth(x + e, z) - this.halfWidth(x - e, z)) / (2 * e);
-    return [side * wx, -side, 0];
+    // боковина y = side·w(x): касательная (1, side·w'), нормаль внутрь (w', −side) — с обеих сторон
+    return [wx, -side, 0];
   }
 
   /** Точка боковины. */
@@ -267,6 +355,9 @@ export class BodyForm {
   rearEdge(z: number) {
     return this.halfWidth(this.xRear, z) - 75;
   }
+
+  /** Вырез под задний фонарь в боковине и панели задка по высоте (фонарь меньше на свой зазор). */
+  readonly tailCut: [number, number] = [897, 1493];
 
   /** Задний конец фары на крыле (по чертежу фара заходит на крыло почти до арки). */
   readonly xLampEnd = -400;

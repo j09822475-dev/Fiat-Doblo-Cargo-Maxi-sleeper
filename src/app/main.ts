@@ -580,7 +580,7 @@ function propsPane() {
 
 const KIND_LABEL: Record<Issue['kind'], string> = {
   collision: 'Пересечение', clearance: 'Мин. зазор', 'gap-small': 'Зазор мал', 'gap-large': 'Зазор велик',
-  'gap-spread': 'Неравномерность', flush: 'Перепад', 'no-seam': 'Нет стыка', regulation: 'Норматив',
+  'gap-spread': 'Неравномерность', flush: 'Перепад', 'no-seam': 'Нет стыка', regulation: 'Норматив', opening: 'Просвет',
 };
 
 function issueList(list: Issue[]) {

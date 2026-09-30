@@ -92,7 +92,7 @@ export type Severity = 'error' | 'warning' | 'info';
 export interface Issue {
   id: string;
   severity: Severity;
-  kind: 'collision' | 'clearance' | 'gap-small' | 'gap-large' | 'gap-spread' | 'flush' | 'no-seam' | 'regulation';
+  kind: 'collision' | 'clearance' | 'gap-small' | 'gap-large' | 'gap-spread' | 'flush' | 'no-seam' | 'regulation' | 'opening';
   title: string;
   parts: string[];
   /** Точка в координатах кузова, мм. */
